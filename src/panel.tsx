@@ -1,5 +1,6 @@
 import { atom, Button, plugin, read, set, Stack, Text, type PanelContext } from 'orca'
 import type { Grafo } from './normalizar'
+import { LATIDO_VISTA_MS } from './protocol'
 import { textos } from './textos'
 
 const grafo = atom<Grafo | null>(null)
@@ -27,6 +28,26 @@ export function setup(ctx: PanelContext): void {
     set(fallo, false)
   }
 
+  const documento = typeof document === 'undefined' ? undefined : document
+  let avisado = false
+  function notificar(visible: boolean) {
+    if (!visible && !avisado) return
+    avisado = visible
+    void plugin.request('vista.visible', { visible }).catch(() => {})
+  }
+  function comprobarVisibilidad() {
+    notificar(read(ctx.visible) && (!documento || documento.visibilityState === 'visible'))
+  }
+  comprobarVisibilidad()
+  const latido = setInterval(comprobarVisibilidad, LATIDO_VISTA_MS)
+  documento?.addEventListener('visibilitychange', comprobarVisibilidad)
+  ctx.subscriptions.push({
+    dispose() {
+      clearInterval(latido)
+      documento?.removeEventListener('visibilitychange', comprobarVisibilidad)
+      notificar(false)
+    },
+  })
   ctx.subscriptions.push(plugin.on('grafo.actualizado', actualizar))
   void plugin.request('grafo.obtener', undefined, { signal: ctx.signal }).then(actualizar, () => {
     if (!ctx.signal.aborted && !read(grafo)) set(fallo, true)
@@ -39,7 +60,7 @@ export default function Panel() {
     <Stack gap="xs">
       <Button icon="file-text" disabled={read(abriendo)} onPress={abrir}>{textos.abrirColmena}</Button>
       {read(errorApertura) && <Text>{read(errorApertura)}</Text>}
-      <Text>{actual ? textos.recuento(actual.nodos.length, actual.aristas.length) :
+      <Text>{actual ? textos.recuento(actual.recuento.nodos, actual.recuento.conexiones) :
         read(fallo) ? textos.falloPanel : textos.consultando}</Text>
       {!!actual?.fallos.length && <Text>{textos.errores(actual.fallos.length)}</Text>}
     </Stack>

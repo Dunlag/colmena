@@ -9,7 +9,7 @@ import { textos } from './textos'
 for (const cantidad of [1, 5, 30]) {
   test(`Dispone ${cantidad} nodos sin solapes y dentro de su máquina`, () => {
     const nodos: Nodo[] = Array.from({ length: cantidad }, (_, i) => ({
-      id: String(i), tipo: i === 0 ? 'tu' : 'worker', nombre: String(i), estado: textos.enCurso,
+      id: String(i), tipo: i === 0 ? 'tu' : 'worker', nombre: String(i), estado: textos.enCurso, situacion: 'trabajando',
       desde: null, tarea: null, maquina: [LOCAL, 'deck', 'chopper'][i % 3],
     }))
     const aristas: Arista[] = nodos.slice(1).map((nodo, i) => ({
@@ -21,17 +21,20 @@ for (const cantidad of [1, 5, 30]) {
     assert.equal(posiciones.size, cantidad)
     assert.equal(padres.size, cantidad - 1)
     const tarjetas = [...posiciones.values()]
+    for (const [actual, siguiente] of bandas.slice(0, -1).map((banda, i) => [banda, bandas[i + 1]])) {
+      assert.ok(siguiente.y > actual.y + actual.alto)
+    }
     for (const [i, actual] of tarjetas.entries()) {
       const banda = bandas.find(({ id }) => id === actual.nodo.maquina)!
-      assert.ok(actual.x >= banda.x && actual.x + actual.ancho <= banda.x + banda.ancho)
-      assert.ok(actual.y >= 0 && actual.y + actual.alto <= alto)
-      assert.ok(banda.x >= 0 && banda.x + banda.ancho <= ancho)
+      assert.ok(actual.x >= 12 && actual.x + actual.ancho <= 12 + banda.ancho)
+      assert.ok(actual.y >= banda.y && actual.y + actual.alto <= banda.y + banda.alto)
+      assert.ok(banda.y >= 0 && banda.y + banda.alto <= alto && banda.ancho <= ancho)
       for (const otra of tarjetas.slice(i + 1)) {
         assert.ok(actual.x + actual.ancho <= otra.x || otra.x + otra.ancho <= actual.x ||
           actual.y + actual.alto <= otra.y || otra.y + otra.alto <= actual.y)
       }
       const padre = padres.get(actual.nodo.id)
-      if (padre) assert.match(curva(posiciones.get(padre)!, actual), /^M .* Q /s)
+      if (padre) assert.match(curva(posiciones.get(padre)!, actual), /^M .* C /s)
     }
   })
 }
@@ -41,7 +44,14 @@ test('Coloca TÚ, Bob, bot y worker en orden y conserva las automatizaciones', (
   const ids = ['tu', 'bot:bob-1', 'bot:bot-2', 'worker:["local","orca_session_id:sesion-a"]']
   for (const [i, hijo] of ids.slice(1).entries()) {
     assert.equal(padres.get(hijo), ids[i])
-    assert.ok(posiciones.get(hijo)!.y > posiciones.get(ids[i])!.y)
+    const padre = posiciones.get(ids[i])!
+    const tarjeta = posiciones.get(hijo)!
+    if (i === 0) {
+      assert.equal(tarjeta.x, padre.x)
+      assert.ok(tarjeta.y > padre.y)
+    } else {
+      assert.ok(tarjeta.x > padre.x)
+    }
   }
   assert.equal(padres.get('automatizacion:riego'), 'bot:bot-2')
   assert.deepEqual(bandas.map(({ nombre }) => nombre), [textos.local, 'Chopper', 'Deck'])
@@ -57,7 +67,9 @@ test('Descarta un ciclo y conserva una sola conexión por hijo', () => {
       { tipo: 'agrupa', origen: 'tu', destino: 'bot:bob-1' },
     ],
   })
-  assert.equal(padres.size, nodos.filter(({ tipo }) => tipo !== 'maquina').length - 1)
+  for (const nodo of nodos.filter(({ tipo }) => tipo === 'bob' || tipo === 'bot' || tipo === 'worker')) {
+    assert.ok(padres.has(nodo.id))
+  }
   for (const id of padres.keys()) {
     const vistos = new Set([id])
     for (let padre = padres.get(id); padre; padre = padres.get(padre)) {

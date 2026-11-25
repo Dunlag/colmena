@@ -6,13 +6,13 @@ import { textos } from './textos'
 
 test('Pide el grafo y actualiza el recuento cuando llega otra captura', async () => {
   const inicial = normalizar({}, 1)
-  const host = mockHost({ requests: { 'grafo.obtener': inicial } })
+  const host = mockHost({ requests: { 'grafo.obtener': inicial, 'vista.visible': {} } })
   const vista = await mount(panel, { host })
   try {
-    assert.ok(vista.find({ text: textos.recuento(2, 1) }))
+    assert.ok(vista.find({ text: textos.recuento(1, 0) }))
     const captura = { bots: { filas: [{ id: 'bob-1', name: 'Bob' }] } }
     await vista.post('grafo.actualizado', normalizar(captura, 2))
-    assert.ok(vista.find({ text: textos.recuento(3, 3) }))
+    assert.ok(vista.find({ text: textos.recuento(2, 1) }))
     assert.deepEqual(vista.errors, [])
   } finally {
     await vista.unmount()
@@ -21,7 +21,7 @@ test('Pide el grafo y actualiza el recuento cuando llega otra captura', async ()
 
 test('El botón del panel pide abrir la pestaña y muestra un fallo devuelto por el worker', async () => {
   const host = mockHost({ requests: {
-    'grafo.obtener': normalizar({}, 1),
+    'grafo.obtener': normalizar({}, 1), 'vista.visible': {},
     'colmena.abrir': { error: textos.faltaEspacioLocal },
   } })
   const vista = await mount(panel, { host })

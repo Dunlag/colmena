@@ -1,8 +1,13 @@
-import type { Arista } from './normalizar'
+import type { Arista, TipoMensaje } from './normalizar'
 
 export const VENTANA_FLUJO_MS = 30_000
 
 export type Mensaje = Arista & { tipo: 'mensaje'; hora: number }
+
+export function tipoMensaje({ mensaje }: Mensaje): TipoMensaje {
+  if (mensaje === 'encargo' || mensaje === 'pregunta' || mensaje === 'resultado') return mensaje
+  return 'estado'
+}
 
 export function mensajes(aristas: readonly Arista[]): Mensaje[] {
   return aristas.filter((arista): arista is Mensaje =>
