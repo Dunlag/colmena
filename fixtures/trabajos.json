@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "result": {
+    "botName": "Huerto",
+    "items": [],
+    "workspaces": [
+      {
+        "agent": null,
+        "id": "taller",
+        "name": "Taller"
+      },
+      {
+        "agent": null,
+        "id": "vacio",
+        "name": "Espacio vacío"
+      }
+    ]
+  }
+}

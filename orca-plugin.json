@@ -3,7 +3,7 @@
   "id": "colmena",
   "name": "Colmena",
   "version": "0.1.0",
-  "description": "A sidebar panel and the worker that answers it.",
+  "description": "Cola de Bob, bots, workers y automatizaciones de Orca por máquina.",
   "engines": {
     "orca": ">=1.4.246"
   },
@@ -19,11 +19,28 @@
         "entry": "src/panel.tsx",
         "ui": "components"
       }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.created"
+      },
+      {
+        "on": "workspace.removed"
+      },
+      {
+        "on": "workspace.changed"
+      }
     ]
   },
   "capabilities": [
     {
-      "kind": "storage:own"
+      "kind": "agent:read"
+    },
+    {
+      "kind": "workspace:read"
     }
   ]
 }

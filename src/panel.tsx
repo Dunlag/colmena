@@ -1,54 +1,31 @@
-// No build step: Orca strips the types and compiles the JSX when the panel loads.
-import {
-  atom,
-  Badge,
-  Button,
-  Heading,
-  plugin,
-  read,
-  Row,
-  set,
-  Stack,
-  Text,
-  update,
-  type PanelContext
-} from 'orca'
+import { atom, plugin, read, set, Stack, Text, type PanelContext } from 'orca'
+import type { Grafo } from './normalizar'
+import { textos } from './textos'
 
-/** What the worker last reported; null until it answers. */
-const total = atom<number | null>(null)
-/** A keyed atom: `persist: 'plugin'` keeps it across panel runs. */
-const step = atom('step', 1, { persist: 'plugin' })
+const grafo = atom<Grafo | null>(null)
+const fallo = atom(false)
 
-async function add(): Promise<void> {
-  // Typed by src/protocol.ts; starts the worker if it is not running.
-  const answer = await plugin.request('counter.add', { by: read(step) })
-  set(total, answer.total)
-}
-
-/** Runs once before the first render; what it pushes to `subscriptions` ends with the panel. */
 export function setup(ctx: PanelContext): void {
-  ctx.subscriptions.push(plugin.on('counter.changed', (payload) => set(total, payload.total)))
-  void plugin.request('counter.get').then((answer) => set(total, answer.total))
+  function actualizar(valor: Grafo) {
+    if (ctx.signal.aborted) return
+    if (valor.generado >= (read(grafo)?.generado ?? 0)) set(grafo, valor)
+    set(fallo, false)
+  }
+
+  ctx.subscriptions.push(plugin.on('grafo.actualizado', actualizar))
+  void plugin.request('grafo.obtener', undefined, { signal: ctx.signal }).then(actualizar, () => {
+    if (!ctx.signal.aborted && !read(grafo)) set(fallo, true)
+  })
 }
 
 export default function Panel() {
-  const value = read(total)
-  const by = read(step)
+  const actual = read(grafo)
+  if (!actual) return <Text>{read(fallo) ? textos.falloPanel : textos.consultando}</Text>
+
   return (
-    <Stack gap="md">
-      <Row justify="between">
-        <Heading>Counter</Heading>
-        <Badge tone="accent">{value === null ? '-' : value}</Badge>
-      </Row>
-      <Row gap="xs">
-        <Button onPress={add}>Add {by}</Button>
-        <Button variant="ghost" onPress={() => update(step, (n) => (n === 1 ? 10 : 1))}>
-          Step {by === 1 ? 10 : 1}
-        </Button>
-      </Row>
-      <Text muted size="xs">
-        src/worker.ts keeps the total in storage. Edit either file and save: Orca reloads it.
-      </Text>
+    <Stack gap="xs">
+      <Text>{textos.recuento(actual.nodos.length, actual.aristas.length)}</Text>
+      {actual.fallos.length > 0 && <Text>{textos.errores(actual.fallos.length)}</Text>}
     </Stack>
   )
 }

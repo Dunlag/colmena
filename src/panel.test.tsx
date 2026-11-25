@@ -1,30 +1,20 @@
-// `orca plugin test .` runs this in Node with the same runtime and checks Orca uses.
-import { assert, mockHost, mount, test } from 'orca/testing'
+import assert from 'node:assert/strict'
+import { mockHost, mount, test } from 'orca/testing'
+import { normalizar } from './normalizar'
 import * as panel from './panel'
+import { textos } from './textos'
 
-test('shows the worker total and adds the step', async () => {
-  let total = 4
-  // Stands in for src/worker.ts: what each plugin.request answers.
-  const host = mockHost({
-    requests: {
-      'counter.get': () => ({ total }),
-      'counter.add': ({ by }) => ({ total: (total += by) })
-    }
-  })
-  const view = await mount(panel, { host })
-  assert.equal(view.find({ role: 'status' })?.text, '4')
-
-  await view.press({ text: 'Add 1' })
-  assert.equal(view.find({ role: 'status' })?.text, '5')
-
-  await view.press({ text: 'Step 10' })
-  await view.press({ text: 'Add 10' })
-  assert.equal(view.find({ role: 'status' })?.text, '15')
-
-  // Another open panel added: the worker posts the new total.
-  await view.post('counter.changed', { total: 20 })
-  assert.equal(view.find({ role: 'status' })?.text, '20')
-  assert.deepEqual(view.errors, [])
-  assert.deepEqual(view.refusals, [])
-  await view.unmount()
+test('Pide el grafo y actualiza el recuento cuando llega otra captura', async () => {
+  const inicial = normalizar({}, 1)
+  const host = mockHost({ requests: { 'grafo.obtener': inicial } })
+  const vista = await mount(panel, { host })
+  try {
+    assert.ok(vista.find({ text: textos.recuento(2, 1) }))
+    const captura = { bots: { filas: [{ id: 'bob-1', name: 'Bob' }] } }
+    await vista.post('grafo.actualizado', normalizar(captura, 2))
+    assert.ok(vista.find({ text: textos.recuento(3, 3) }))
+    assert.deepEqual(vista.errors, [])
+  } finally {
+    await vista.unmount()
+  }
 })

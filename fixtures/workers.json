@@ -1,0 +1,66 @@
+{
+  "ok": true,
+  "result": {
+    "workers": [
+      {
+        "workerState": "ready",
+        "dispatchStatus": "dispatched",
+        "terminalState": "active",
+        "dispatchId": "despacho-a",
+        "agentTerminalHandle": "term_a",
+        "projection": {
+          "host": {
+            "kind": "local",
+            "id": "local"
+          },
+          "provider": {
+            "id": "codex"
+          },
+          "stage": {
+            "worker": "ready",
+            "dispatch": "dispatched",
+            "detail": "input_accepted",
+            "activity": "working"
+          },
+          "workspace": {
+            "id": "taller",
+            "kind": "folder_or_worktree"
+          },
+          "evidence": {
+            "lastObservedAt": 1795607998000
+          }
+        }
+      },
+      {
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "terminalState": "released",
+        "dispatchId": "despacho-b",
+        "agentTerminalHandle": "term_b",
+        "resource": {
+          "releaseCompletedAt": "2026-11-25T10:00:00.000Z"
+        },
+        "projection": {
+          "host": {
+            "kind": "local",
+            "id": "local"
+          },
+          "stage": {
+            "worker": "succeeded",
+            "dispatch": "completed",
+            "detail": "settled",
+            "activity": "unknown"
+          },
+          "provider": {
+            "id": "codex",
+            "model": "modelo-de-ejemplo"
+          },
+          "workspace": {
+            "id": "taller-anterior",
+            "kind": "folder_or_worktree"
+          }
+        }
+      }
+    ]
+  }
+}

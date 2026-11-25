@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "result": {
+    "botId": "bob-1",
+    "botName": "Bob",
+    "items": [
+      {
+        "number": 22,
+        "uid": "item-a",
+        "status": "needs_you",
+        "title": "Confirmar la fecha",
+        "createdAt": 1795607994000,
+        "updatedAt": 1795607996000
+      }
+    ]
+  }
+}

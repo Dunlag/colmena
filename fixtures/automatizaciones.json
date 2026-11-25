@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "result": {
+    "automations": [
+      {
+        "agentId": "claude",
+        "executionTargetType": "local",
+        "executionTargetId": "local",
+        "enabled": true,
+        "id": "riego",
+        "name": "Riego",
+        "prompt": "Comprobar el riego del huerto",
+        "createdAt": 1795607991000,
+        "bot": {
+          "botId": "bot-2"
+        }
+      }
+    ]
+  }
+}

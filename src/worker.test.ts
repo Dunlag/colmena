@@ -1,14 +1,50 @@
-// Runs src/worker.ts's activate(orca) with the orca object Orca passes, over a mock host.
-import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import * as main from './worker'
+import assert from 'node:assert/strict'
+import { mountWorker, test } from 'orca/testing'
+import { lector } from './fuentes'
+import { activar, eventos } from './worker'
 
-test('adds to the stored total and tells open panels', async () => {
-  const host = mockHost({ storage: { total: 2 } })
-  const worker = await mountWorker(main, { host })
-  assert.deepEqual(await worker.request('counter.get'), { total: 2 })
-  assert.deepEqual(await worker.request('counter.add', { by: 3 }), { total: 5 })
-  assert.deepEqual(worker.posts, [{ event: 'counter.changed', payload: { total: 5 } }])
-  assert.deepEqual(host.data().storage, { total: 5 })
-  assert.deepEqual(worker.refusals, [])
-  await worker.deactivate()
+test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', async () => {
+  let enCurso = false
+  const llamadas: string[] = []
+  const fuente = lector(new AbortController().signal, async (args) => {
+    assert.equal(enCurso, false)
+    enCurso = true
+    await Promise.resolve()
+    enCurso = false
+    const orden = args.slice(0, -1).join(' ')
+    llamadas.push(orden)
+    assert.equal(args.at(-1), '--json')
+    if (orden === 'bot list') return JSON.stringify({ ok: true, result: { bots: [{ name: 'Bob' }] } })
+    if (orden.startsWith('bot work list')) return JSON.stringify({ ok: false, error: { code: 'ejemplo' } })
+    if (orden.startsWith('bot item list')) return JSON.stringify({ ok: true, result: { items: [] } })
+    if (orden.startsWith('orchestration inbox')) return JSON.stringify({ ok: true, result: { messages: [] } })
+    return JSON.stringify({ ok: true, result: { automations: [{ id: 'riego' }] } })
+  })
+  const datos = await fuente.otras()
+  assert.deepEqual(llamadas, [
+    'bot list', 'bot work list --bot Bob', 'bot item list --bot Bob --status needs_you',
+    'orchestration inbox --full', 'automations list',
+  ])
+  assert.equal(datos.trabajos?.Bob.fallo?.codigo, 'ejemplo')
+  assert.equal(datos.automatizaciones?.filas[0].id, 'riego')
+})
+
+test('El worker devuelve un grafo en el request del panel', async () => {
+  let detener: (() => void) | undefined
+  const worker = await mountWorker({
+    default: (orca) => {
+      detener = activar(orca, () => ({
+        vivas: async () => ({}),
+        otras: async () => ({}),
+      }))
+    },
+    deactivate: () => detener?.(),
+  }, { events: eventos })
+  try {
+    const grafo = await worker.request('grafo.obtener')
+    assert.equal(grafo.nodos[0].tipo, 'tu')
+    assert.ok(Number.isFinite(grafo.generado))
+  } finally {
+    await worker.deactivate()
+  }
 })

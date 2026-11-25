@@ -1,8 +1,6 @@
-// `orca plugin check` renders the panel once per scenario, each with the worker on a fresh
-// host. Seed what the worker reads so check shows more than the first state.
 import { defineCheck } from 'orca/testing'
+import { normalizar } from './normalizar'
 
 export default defineCheck({
-  fresh: {},
-  counted: { storage: { total: 41 } }
+  recuento: { requests: { 'grafo.obtener': normalizar({}, 1) } },
 })

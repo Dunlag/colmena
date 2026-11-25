@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "result": {
+    "bots": [
+      {
+        "agent": "claude",
+        "paused": false,
+        "id": "bob-1",
+        "name": "Bob",
+        "specialty": "Coordinar el trabajo"
+      },
+      {
+        "agent": "claude",
+        "paused": false,
+        "id": "bot-2",
+        "name": "Huerto",
+        "specialty": "Cuidar el huerto"
+      }
+    ]
+  }
+}

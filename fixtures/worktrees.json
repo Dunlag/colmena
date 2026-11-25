@@ -1,0 +1,44 @@
+{
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "hostId": "local",
+        "environment": {
+          "id": "local",
+          "name": "local"
+        },
+        "workspaceKind": "git",
+        "status": "working",
+        "worktreeId": "taller",
+        "displayName": "Taller",
+        "bot": "Huerto",
+        "agents": [
+          {
+            "state": "working",
+            "agentType": "codex",
+            "paneKey": "tab-a:panel-a",
+            "orcaSessionId": "sesion-a",
+            "address": "orca_session_id:sesion-a",
+            "taskTitle": "Revisar\n el huerto",
+            "stateStartedAt": 1795607995000
+          }
+        ]
+      },
+      {
+        "hostId": "local",
+        "environment": {
+          "id": "local",
+          "name": "local"
+        },
+        "workspaceKind": "git",
+        "status": "inactive",
+        "worktreeId": "vacio",
+        "displayName": "Espacio vacío",
+        "agents": [],
+        "lastActivityAt": null,
+        "lastOutputAt": null
+      }
+    ]
+  }
+}

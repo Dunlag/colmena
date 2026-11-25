@@ -1,14 +1,17 @@
 # Colmena
 
-A right-sidebar panel (`src/panel.tsx`) and the plugin's own worker (`src/worker.ts`). The panel asks with `plugin.request`, the worker answers with `orca.panels.handle`, keeps the total in `orca.storage` and tells every open panel with `orca.panels.post`; `src/protocol.ts` types both sides. Orca transpiles both files when they load, so there is no build step: save and the panel or worker reloads (a worker reload drops its in-memory state, so keep what must last in storage). `orca plugin test .` runs `src/panel.test.tsx` and `src/worker.test.ts` in Node with `orca/testing`, and `orca plugin check .` renders the panel with the worker in each `src/panel.check.ts` scenario; `npx tsc -p .` type-checks against the typings `orca plugin types .` writes to `.orca/types/`. With the folder loaded, `orca plugin dev request . counter.add --data '{"by":1}'` calls the worker as the panel does.
+Plugin de Orca que reúne, por máquina, la cola **Needs you** de Bob, los bots, los workers y las automatizaciones. Este hito expone el grafo y muestra su recuento en el panel. Los workers terminados con hora conocida se atenúan hasta que pasan 24 horas desde su finalización.
 
-## Develop
+## Cómo probar
+
+Desde este directorio, con la CLI de Orca disponible:
 
 ```sh
-orca plugin validate .
-orca plugin dev watch .    # loads this folder into Orca and prints its logs and reloads; Ctrl-C unloads it
+orca plugin test . --json
+orca plugin check . --json
+orca plugin validate . --json
 ```
 
-Orca names the publisher after where the plugin is installed from: the GitHub or GitLab owner of
-its repository, or `local` for a folder. See
-https://github.com/stablyai/orca/blob/main/docs/reference/plugin-authoring.md.
+El worker consulta la CLI del host en JSON. Su panel usa `grafo.obtener` para leer el grafo y recibe `grafo.actualizado` al refrescar. Las consultas de workspaces y workers vencen cada 4 s y las demás cada 20 s. Orca adelanta la consulta rápida cuando cambia un workspace o el estado de un agente. Si una consulta falla, el grafo sigue disponible e incluye el fallo.
+
+Las pruebas usan extractos de salidas reales de Orca. Se sustituyeron los identificadores, nombres privados, textos y fechas, y se añadieron ejemplos para cubrir una cola pendiente y un worker sin modelo.
