@@ -3,7 +3,7 @@ import { mensajes, tipoMensaje, ultimos30Segundos, VENTANA_FLUJO_MS } from './fl
 import { curva, disponer } from './layout'
 import type { Grafo, Nodo, Situacion } from './normalizar'
 import { LATIDO_VISTA_MS } from './protocol'
-import { textos, traducirAsunto } from './textos'
+import { descripcionTarea, textos, traducirAsunto } from './textos'
 
 const CANTIDAD_FLUJOS = 20
 const NIVELES = { ahorro: textos.ahorro, completo: textos.completo } as const
@@ -258,7 +258,7 @@ export function montarPestana(orca: OrcaFrameApi) {
     const detalle = [tipos[tipo].etiqueta, nodo.agente, nodo.modelo].filter(Boolean).join(' · ')
     const meta = elemento('span', 'secundario truncado', detalle)
     meta.title = detalle
-    const descripcion = nodo.tarea && nodo.tarea !== nodo.nombre ? nodo.tarea : ''
+    const descripcion = descripcionTarea(nodo)
     const tarea = elemento('span', 'tarea truncado', descripcion)
     if (descripcion) tarea.title = descripcion
     const chip = elemento('span', 'chip-maquina truncado', maquina)

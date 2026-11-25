@@ -1,3 +1,5 @@
+import type { Nodo } from './normalizar'
+
 // Asuntos de sistema de Orca: solo se traducen al mostrarlos; los datos no cambian.
 const asuntosSistema: Record<string, string> = {
   'Worker stopped without reporting': 'El worker paró sin informar',
@@ -9,6 +11,11 @@ const asuntosSistema: Record<string, string> = {
 
 export function traducirAsunto(asunto: string): string {
   return Object.hasOwn(asuntosSistema, asunto) ? asuntosSistema[asunto] : asunto
+}
+
+/** Texto de la tarea en la tarjeta; oculta la tarea cuando repite el nombre. */
+export function descripcionTarea(nodo: Nodo): string {
+  return nodo.tarea && nodo.tarea !== nodo.nombre ? traducirAsunto(nodo.tarea) : ''
 }
 
 export const textos = {
