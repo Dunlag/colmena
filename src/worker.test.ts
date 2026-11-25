@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { mockHost, mountWorker, test } from 'orca/testing'
 import { clave, LOCAL } from './datos'
-import { lector } from './fuentes'
+import { LENTA_MS, lector } from './fuentes'
 import { CLAVE_MODELOS, type Modelos } from './modelo'
 import { activar, eventos, hookModelo } from './worker'
 
 test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', async () => {
   let enCurso = false
   const llamadas: string[] = []
+  let reloj = 0
   const fuente = lector(new AbortController().signal, async (args) => {
     assert.equal(enCurso, false)
     enCurso = true
@@ -24,13 +25,25 @@ test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', a
     if (orden.startsWith('bot item list')) return JSON.stringify({ ok: true, result: { items: [] } })
     if (orden.startsWith('orchestration inbox')) return JSON.stringify({ ok: true, result: { messages: [] } })
     return JSON.stringify({ ok: true, result: { automations: [{ id: 'riego' }] } })
-  })
+  }, () => reloj)
   const datos = await fuente.otras()
   assert.deepEqual(llamadas, [
-    'bot list', 'bot work list --bot Bob', 'agent list',
+    'bot list', 'bot work list --bot Bob', 'automations list', 'agent list',
     'bot item list --bot Bob --status needs_you', 'orchestration inbox --limit 100 --full',
-    'automations list', 'orchestration worker-list --full',
+    'orchestration worker-list --full',
   ])
+  // Dentro de 10 min solo se repite lo rápido (los datos lentos se conservan).
+  llamadas.length = 0
+  const repetida = await fuente.otras()
+  assert.deepEqual(llamadas, [
+    'agent list', 'bot item list --bot Bob --status needs_you', 'orchestration inbox --limit 100 --full',
+    'orchestration worker-list --full',
+  ])
+  assert.equal(repetida.automatizaciones?.filas[0].id, 'riego')
+  llamadas.length = 0
+  reloj = LENTA_MS
+  await fuente.otras()
+  assert.equal(llamadas.at(0), 'bot list')
   assert.equal(datos.trabajos?.Bob.fallo?.codigo, 'ejemplo')
   assert.equal(datos.automatizaciones?.filas[0].id, 'riego')
 })

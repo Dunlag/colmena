@@ -11,6 +11,8 @@ import {
 import { textos } from './textos'
 
 const LIMITE_MS = 2500
+// Bots, trabajos de bots, automatizaciones y entornos cambian poco: se releen cada 10 min, no en cada ronda.
+export const LENTA_MS = 600_000
 // El roster local espera hasta 4 s por los pares antes de devolver sus propios bots.
 const LIMITE_ROSTER_LOCAL_MS = 6000
 
@@ -76,8 +78,12 @@ export async function vivas(host: Host, signal: AbortSignal): Promise<Captura> {
   }) } }
 }
 
-export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
+type Lenta = { en: number; bots: Fuente; trabajos: Record<string, Fuente>; automatizaciones: Fuente }
+
+export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar, ahora: () => number = Date.now) {
   let signal = vida
+  let entornosEn = 0
+  const lentas = new Map<string, Lenta>()
   let entornos: Fuente | undefined
   let servidores: Entorno[] = []
   const detalles = new Map<string, Fila>()
@@ -85,6 +91,7 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
 
   async function consultar(
     argumentos: string[], campo: string, servidor?: Entorno, paginar = false, objetoUnico = false,
+    suficiente?: (pagina: Fila[]) => boolean,
   ): Promise<Fuente> {
     const fuente = argumentos.join(' ')
     const maquina = servidor ? maquinaRemota(servidor.id) : LOCAL
@@ -111,7 +118,8 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
         const resultado = objeto(pagina.result)
         const valor = resultado[campo]
         if (pagina.ok !== true || (!objetoUnico && !Array.isArray(valor))) throw new SyntaxError()
-        acumuladas.push(...(objetoUnico ? [objeto(valor)] : filas(valor)))
+        const recibidas = objetoUnico ? [objeto(valor)] : filas(valor)
+        acumuladas.push(...recibidas)
         if (campo === 'workspaces') items = filas(resultado.items)
         const alcance = objeto(resultado.hostScope)
         if (Array.isArray(alcance.hostIds)) hosts = alcance.hostIds.flatMap((host) => texto(host) ?? [])
@@ -123,7 +131,7 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
             (campo !== 'bots' && filas(resultado.unreachable).length > 0) || filas(resultado.partialHostErrors).length > 0) {
           fallo = { maquina, fuente, codigo: 'parcial', mensaje: textos.parcial }
         }
-        cursor = paginar ? texto(objeto(resultado.page).nextCursor, resultado.nextCursor) : null
+        cursor = paginar && !suficiente?.(recibidas) ? texto(objeto(resultado.page).nextCursor, resultado.nextCursor) : null
         if (cursor && cursores.has(cursor)) throw new SyntaxError()
         if (cursor) cursores.add(cursor)
       } catch (error) {
@@ -143,7 +151,7 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
   async function completarWorkers(workers: Fuente, servidor?: Entorno) {
     const porRun = new Map<string, Map<string, Fila>>()
     const maquina = servidor?.id ?? LOCAL
-    const ahora = Date.now()
+    const hoy = ahora()
     for (const worker of workers.filas) {
       if (signal.aborted) break
       const run = texto(worker.runId, objeto(worker.projection).runId)
@@ -156,14 +164,14 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
         continue
       }
       const fin = fecha(objeto(worker.resource).releaseCompletedAt)
-      if (fin !== null && ahora - fin >= DIA_MS) continue
+      if (fin !== null && hoy - fin >= DIA_MS) continue
       if (!porRun.has(run)) {
         const tareas = await consultar(['orchestration', 'task-list', '--run', run, '--full'], 'tasks', servidor)
         porRun.set(run, new Map(tareas.filas.map((fila) => [String(fila.id), fila])))
       }
       const registro = porRun.get(run)?.get(tarea)
       const finTarea = fecha(registro?.completed_at, fin)
-      if (finTarea !== null && ahora - finTarea >= DIA_MS) continue
+      if (finTarea !== null && hoy - finTarea >= DIA_MS) continue
       const { filas: [contexto] } = await consultar(
         ['orchestration', 'dispatch-show', '--task', tarea, '--full'], 'dispatch', servidor, false, true,
       )
@@ -190,17 +198,21 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
         agent: texto(prov.id, inicio.agent),
         model: texto(prov.model, lanzamiento.model, objeto(objeto(inicio.launch).requested).model),
       }
-      if (finTarea !== null && metadatos.taskTitle && (coordinador || metadatos.creatorDispatch)) {
+      // Una tarea terminada ya no cambia: se cachea aunque falte el coordinador para no repetir task-list y dispatch-show.
+      if (finTarea !== null && metadatos.taskTitle) {
         detalles.set(`${maquina}:${dispatch}`, metadatos)
       }
       Object.assign(worker, metadatos)
     }
     for (const [id, campos] of detalles) {
-      if (ahora - (fecha(campos.completedAt) ?? ahora) >= DIA_MS) detalles.delete(id)
+      if (hoy - (fecha(campos.completedAt) ?? hoy) >= DIA_MS) detalles.delete(id)
     }
   }
 
-  async function otrasHost(servidor?: Entorno): Promise<CapturaHost> {
+  async function lentaHost(servidor?: Entorno): Promise<Lenta> {
+    const id = servidor?.id ?? LOCAL
+    const previa = lentas.get(id)
+    if (previa && ahora() - previa.en < LENTA_MS) return previa
     const bots = await consultar(['bot', 'list'], 'bots', servidor)
     bots.filas = bots.filas.filter((bot) => !bot.server)
     const trabajos: Record<string, Fuente> = Object.create(null)
@@ -211,6 +223,16 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
         trabajos[id] = await consultar(['bot', 'work', 'list', '--bot', nombre], 'workspaces', servidor)
       }
     }
+    const automatizaciones = await consultar(['automations', 'list'], 'automations', servidor)
+    const lenta = { en: ahora(), bots, trabajos, automatizaciones }
+    // Si falla la lista de bots o de automatizaciones no se cachea: la siguiente ronda reintenta.
+    if (signal.aborted || bots.fallo || automatizaciones.fallo) lentas.delete(id)
+    else lentas.set(id, lenta)
+    return lenta
+  }
+
+  async function otrasHost(servidor?: Entorno): Promise<CapturaHost> {
+    const { bots, trabajos, automatizaciones } = await lentaHost(servidor)
     // Sin bots no hay inicios que buscar; sin consultar tampoco cuenta como fuente disponible.
     const agentes = bots.filas.length ? await consultar(['agent', 'list'], 'agents', servidor) : undefined
     const nombres = new Set(bots.filas.map(({ name }) => name))
@@ -229,8 +251,13 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
       ['bot', 'item', 'list', '--bot', textos.bob, '--status', 'needs_you'], 'items', servidor, true,
     )
     const mensajes = await consultar(['orchestration', 'inbox', '--limit', '100', '--full'], 'messages', servidor)
-    const automatizaciones = await consultar(['automations', 'list'], 'automations', servidor)
-    const workers = await consultar(['orchestration', 'worker-list', '--full'], 'workers', servidor, true)
+    // shortcut: la lista llega de más nuevo a más viejo; si la página acaba en un worker liberado hace más de 24 h
+    // (que el grafo ya descarta) no se pide la siguiente. Retenidos muy antiguos pueden quedar fuera.
+    const workers = await consultar(['orchestration', 'worker-list', '--full'], 'workers', servidor, true, false,
+      (pagina) => {
+        const fin = fecha(objeto(pagina.at(-1)?.resource).releaseCompletedAt)
+        return fin !== null && ahora() - fin >= DIA_MS
+      })
     await completarWorkers(workers, servidor)
     for (const mensaje of mensajes.filas) {
       for (const campo of ['from_handle', 'to_handle']) {
@@ -255,8 +282,11 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
   return {
     async otras(visible: AbortSignal = vida): Promise<Captura> {
       signal = AbortSignal.any([vida, visible])
-      const listado = await consultar(['environment', 'list'], 'environments')
-      entornos = listado.fallo ? { ...listado, filas: entornos?.filas ?? [] } : listado
+      if (!entornos || ahora() - entornosEn >= LENTA_MS) {
+        const listado = await consultar(['environment', 'list'], 'environments')
+        entornos = listado.fallo ? { ...listado, filas: entornos?.filas ?? [] } : listado
+        entornosEn = listado.fallo ? 0 : ahora()
+      }
       servidores = entornosGuardados(entornos)
       entornos.filas = servidores.map(({ id, nombre }) => ({ id, name: nombre }))
       const local = await otrasHost()
