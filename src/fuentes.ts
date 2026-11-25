@@ -42,6 +42,13 @@ function ejecutar(argumentos: string[], signal: AbortSignal): Promise<string> {
 
 export type Ejecutar = typeof ejecutar
 
+export async function enfocarTerminalRemoto(terminalId: string, entorno: string, signal: AbortSignal) {
+  const respuesta = objeto(JSON.parse(await ejecutar([
+    'terminal', 'switch', '--terminal', terminalId, '--environment', entorno, '--json',
+  ], signal)))
+  return respuesta.ok === true && objeto(objeto(respuesta.result).focus).navigated === true
+}
+
 export function lector(signal: AbortSignal, comando: Ejecutar = ejecutar) {
   let entornos: Fuente | undefined
   let servidores: Entorno[] = []

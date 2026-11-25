@@ -18,3 +18,18 @@ test('Pide el grafo y actualiza el recuento cuando llega otra captura', async ()
     await vista.unmount()
   }
 })
+
+test('El botón del panel pide abrir la pestaña y muestra un fallo devuelto por el worker', async () => {
+  const host = mockHost({ requests: {
+    'grafo.obtener': normalizar({}, 1),
+    'colmena.abrir': { error: textos.faltaEspacioLocal },
+  } })
+  const vista = await mount(panel, { host })
+  try {
+    await vista.press({ text: textos.abrirColmena })
+    assert.ok(vista.find({ text: textos.faltaEspacioLocal }))
+    assert.deepEqual(vista.errors, [])
+  } finally {
+    await vista.unmount()
+  }
+})

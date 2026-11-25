@@ -1,6 +1,6 @@
 import { defineCheck } from 'orca/testing'
-import { normalizar } from './normalizar'
+import { grafoEjemplo } from './ejemplo'
 
 export default defineCheck({
-  recuento: { requests: { 'grafo.obtener': normalizar({}, 1) } },
+  recuento: { requests: { 'grafo.obtener': grafoEjemplo() } },
 })

@@ -1,9 +1,24 @@
-import { atom, plugin, read, set, Stack, Text, type PanelContext } from 'orca'
+import { atom, Button, plugin, read, set, Stack, Text, type PanelContext } from 'orca'
 import type { Grafo } from './normalizar'
 import { textos } from './textos'
 
 const grafo = atom<Grafo | null>(null)
 const fallo = atom(false)
+const errorApertura = atom<string | undefined>(undefined)
+const abriendo = atom(false)
+
+async function abrir() {
+  if (read(abriendo)) return
+  set(abriendo, true)
+  set(errorApertura, undefined)
+  try {
+    set(errorApertura, (await plugin.request('colmena.abrir')).error)
+  } catch {
+    set(errorApertura, textos.falloAbrirColmena)
+  } finally {
+    set(abriendo, false)
+  }
+}
 
 export function setup(ctx: PanelContext): void {
   function actualizar(valor: Grafo) {
@@ -20,12 +35,13 @@ export function setup(ctx: PanelContext): void {
 
 export default function Panel() {
   const actual = read(grafo)
-  if (!actual) return <Text>{read(fallo) ? textos.falloPanel : textos.consultando}</Text>
-
   return (
     <Stack gap="xs">
-      <Text>{textos.recuento(actual.nodos.length, actual.aristas.length)}</Text>
-      {actual.fallos.length > 0 && <Text>{textos.errores(actual.fallos.length)}</Text>}
+      <Button icon="file-text" disabled={read(abriendo)} onPress={abrir}>{textos.abrirColmena}</Button>
+      {read(errorApertura) && <Text>{read(errorApertura)}</Text>}
+      <Text>{actual ? textos.recuento(actual.nodos.length, actual.aristas.length) :
+        read(fallo) ? textos.falloPanel : textos.consultando}</Text>
+      {!!actual?.fallos.length && <Text>{textos.errores(actual.fallos.length)}</Text>}
     </Stack>
   )
 }

@@ -19,9 +19,12 @@ export type Nodo = {
   desde: number | null
   agente?: string
   modelo?: string
+  destino?: Destino
   atenuado?: true
   pendientes?: Pendiente[]
 }
+
+export type Destino = { terminalId?: string; workspaceId?: string }
 
 export type Arista = {
   tipo: 'agrupa' | 'lanzamiento' | 'mensaje'
@@ -83,6 +86,8 @@ type Observacion = {
   ids: string[]
   maquina: string
   workspace?: string | null
+  workspaceNavegable?: string | null
+  terminal?: string | null
   padre?: string | null
   bot?: string | null
   nombre: string | null
@@ -103,6 +108,8 @@ function desdeAgente(agente: Fila, espacio: Fila, maquina: string): Observacion 
     ids: claves(sesion(agente.orcaSessionId), agente.address, agente.terminalHandle, agente.paneKey, agente.id),
     maquina,
     workspace: texto(espacio.worktreeId),
+    workspaceNavegable: texto(objeto(espacio.identity).key),
+    terminal: texto(agente.terminalHandle, agente.terminalId),
     padre: texto(agente.parentPaneKey, espacio.parentWorktreeId),
     bot: texto(espacio.bot),
     nombre: linea(agente.conversationName, agente.displayName, espacio.displayName),
@@ -137,6 +144,7 @@ function desdeDispatch(worker: Fila, base: string): Observacion {
       worker.paneKey, id && `dispatch:${id}`, id),
     maquina: enMaquina(servidorId(servidor) ?? texto(host.id, worker.hostId), base),
     workspace: texto(espacio.id, recurso.worktreeId),
+    terminal: texto(worker.agentTerminalHandle, recurso.terminalHandle),
     padre: texto(padre.dispatchId, padre.id, padre.address, worker.coordinatedFrom,
       texto(padre.taskId) && `task:${padre.taskId}`),
     bot: texto(worker.bot),
@@ -160,6 +168,7 @@ function desdeTrabajo(trabajo: Fila, bot: string, maquina: string, base: string)
       trabajo.dispatchId, trabajo.workerId, trabajo.id),
     maquina: texto(trabajo.hostId) ? enMaquina(texto(trabajo.hostId), base) : maquina,
     workspace: texto(trabajo.worktreeId, trabajo.workspaceId),
+    terminal: texto(trabajo.terminalHandle, trabajo.agentTerminalHandle),
     bot,
     nombre: linea(trabajo.title, trabajo.name),
     agente: texto(agente.agentType, trabajo.agent, agente.id),
@@ -206,6 +215,21 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
   const maquinasPorNombre = new Map<string, string>()
   const maquinasObservadas = new Set<string>()
   const porPanel = captura.terminales && inventarioTerminales({ base, fuente: captura.terminales }).porPanel
+  const terminales = new Map<string, string>()
+  for (const fila of captura.terminales?.filas ?? []) {
+    const id = texto(fila.handle, fila.ptyId)
+    if (!id) continue
+    const maquina = enMaquina(texto(fila.executionHostId), base)
+    for (const alias of claves(fila.handle, fila.ptyId)) terminales.set(clave(maquina, alias), id)
+  }
+  function destino(grupo: Observacion[]): Destino | undefined {
+    const terminalId = texto(...grupo.flatMap((visto) =>
+      visto.ids.map((id) => terminales.get(clave(visto.maquina, id)))), ...grupo.map((visto) => visto.terminal))
+    const workspaceId = texto(...grupo.map((visto) => visto.workspaceNavegable), ...grupo.map((visto) => visto.workspace))
+    return terminalId || workspaceId ? {
+      ...(terminalId && { terminalId }), ...(workspaceId && { workspaceId }),
+    } : undefined
+  }
   const idNodo = (tipo: string, maquina: string, id: string) =>
     `${tipo}:${maquina === LOCAL ? id : clave(maquina, id)}`
 
@@ -258,11 +282,13 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     const host = texto(bot.hostId) ?? (nombreServidor && maquinasPorNombre.get(nombreServidor)) ?? servidorId(servidor)
     const maquina = enMaquina(host, base)
     const id = idNodo('bot', maquina, original)
+    const workspaceId = texto(bot.homeWorktreeId, bot.worktreeId, bot.workspaceId)
     if (nombreServidor && maquina !== base) nombresMaquina.set(maquina, nombreServidor)
     if (!nodos.has(id)) nodos.set(id, {
       id, tipo: 'bot', nombre, maquina, estado: bot.paused ? textos.pausado : textos.disponible,
       tarea: linea(bot.specialty), desde: fecha(bot.updatedAt, bot.createdAt),
       ...(agente && { agente }), ...(modelo && { modelo }),
+      ...(workspaceId && { destino: { workspaceId } }),
       ...(base !== LOCAL && maquina === base && nombre === textos.bob && { pendientes }),
     })
     for (const alias of [original, nombre]) {
@@ -300,6 +326,11 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     const id = texto(espacio.worktreeId)
     const propietario = (id && propietarios.get(clave(host, id))) || texto(espacio.bot)
     const bot = propietario ? bots.get(clave(host, propietario)) : undefined
+    const nodoBot = bot ? nodos.get(bot) : undefined
+    const espacioBot = texto(objeto(espacio.identity).key, id)
+    if (nodoBot && espacio.botHome === true && espacioBot && !nodoBot.destino) {
+      nodoBot.destino = { workspaceId: espacioBot }
+    }
 
     for (const agente of agentes) {
       const visto = desdeAgente(agente, espacio, host)
@@ -311,6 +342,8 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
           participantes.set(clave(visto.maquina, alias), bot)
         }
         const nodo = nodos.get(bot)!
+        const enlace = destino([visto])
+        if (enlace) nodo.destino = enlace
         if (visto.desde !== null && (nodo.desde === null || visto.desde >= nodo.desde)) {
           nodo.desde = visto.desde
           nodo.tarea = visto.tarea ?? nodo.tarea
@@ -375,7 +408,7 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     grupo.sort((a, b) => (b.desde ?? 0) - (a.desde ?? 0))
     const actual = grupo.find((visto) => visto.estado) ?? grupo[0]
     const cerrado = actual.estado && cerrados.has(actual.estado)
-    const fin = actual.fin
+    const fin = actual.fin ?? null
     if (cerrado && (fin == null || ahora - fin >= DIA_MS)) continue
 
     const id = `worker:${canonico}`
@@ -389,11 +422,13 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     }
     const agente = registrado?.agente ?? texto(...grupo.map((visto) => visto.agente))
     const modelo = registrado?.modelo ?? texto(...grupo.map((visto) => visto.modelo))
+    const enlace = destino(grupo)
     nodos.set(id, {
       id, tipo: 'worker', nombre: actual.nombre ?? agente ?? textos.worker,
       estado: estado(actual.estado), maquina: actual.maquina, desde: actual.desde,
       tarea: linea(...grupo.map((visto) => visto.tarea)),
       ...(agente && { agente }), ...(modelo && { modelo }),
+      ...(enlace && { destino: enlace }),
       ...(cerrado && { atenuado: true as const }),
     })
     origenes.push({ id, grupo })
@@ -440,12 +475,17 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     const bot = objeto(auto.bot)
     const lanzamiento = objeto(objeto(bot.agentSetup).launch)
     const modelo = texto(auto.model, objeto(auto.agentSetup).model, lanzamiento.model)
+    const terminalId = texto(auto.terminalHandle, auto.lastRunTerminalHandle)
+    const workspaceId = texto(auto.workspaceId, auto.worktreeId, auto.lastRunWorkspaceId)
     nodos.set(id, {
       id, tipo: 'automatizacion', nombre: linea(auto.name) ?? claveAuto,
       estado: auto.enabled ? textos.activa : textos.desactivada,
       maquina,
       tarea: linea(auto.prompt, auto.name), desde: fecha(auto.lastRunAt, auto.createdAt),
       ...(agente && { agente }), ...(modelo && { modelo }),
+      ...((terminalId || workspaceId) && {
+        destino: { ...(terminalId && { terminalId }), ...(workspaceId && { workspaceId }) },
+      }),
     })
     const origen = bots.get(clave(base, texto(bot.botId) ?? ''))
     if (origen) conectar({ tipo: 'agrupa', origen, destino: id })

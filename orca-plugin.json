@@ -11,6 +11,21 @@
   "pluginApi": 1,
   "main": "src/worker.ts",
   "contributes": {
+    "commands": [
+      {
+        "id": "colmena.abrir",
+        "title": "Abrir colmena",
+        "when": "workspace"
+      }
+    ],
+    "customEditors": [
+      {
+        "id": "colmena",
+        "title": "Colmena",
+        "extensions": [".colmena"],
+        "entry": "src/pestana.html"
+      }
+    ],
     "panels": [
       {
         "id": "colmena",
@@ -47,6 +62,9 @@
     },
     {
       "kind": "workspace:read"
+    },
+    {
+      "kind": "workspace:write"
     },
     {
       "kind": "storage:own"

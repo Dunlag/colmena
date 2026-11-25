@@ -2,6 +2,7 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { clave, LOCAL, maquinaRemota, type Captura } from './datos'
 import { lector } from './fuentes'
 import { CLAVE_MODELOS, depurarModelos, leerModelo, type Modelos } from './modelo'
+import { abrirColmena, abrirNodo } from './navegar'
 import { normalizar } from './normalizar'
 import { textos } from './textos'
 
@@ -102,6 +103,13 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector): () => Promis
   })
 
   const suscripciones = eventos.map((evento) => orca.events.on(evento, adelantar))
+  suscripciones.push(
+    orca.commands.register('colmena.abrir', async () => (await abrirColmena(orca.host)).error),
+    orca.panels.handle('colmena.abrir', () => abrirColmena(orca.host)),
+    orca.panels.handle('nodo.abrir', ({ id }, { panel, signal }) => panel.surface === 'editor'
+      ? abrirNodo(orca.host, signal, grafo.nodos.find((nodo) => nodo.id === id))
+      : { error: textos.sinDestino }),
+  )
   suscripciones.push(orca.hooks.on(hookModelo, ({ terminalId, agent, command }) => {
     if (vida.signal.aborted || !terminalId) return
     const desde = Date.now()

@@ -1,30 +1,13 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { test } from 'orca/testing'
 import { normalizar } from './normalizar'
-import { clave, LOCAL, type Captura, type Fila } from './datos'
+import { capturaEjemplo as captura } from './ejemplo'
+import { clave, LOCAL, type Fila } from './datos'
 import { textos } from './textos'
 
 const AHORA = 1795608000000
 const FIN = Date.parse('2026-11-25T10:00:00.000Z')
 const DIA_MS = 86_400_000
-
-function leer(nombre: string, campo: string): Fila[] {
-  const ruta = new URL(`../fixtures/${nombre}.json`, import.meta.url)
-  return JSON.parse(readFileSync(ruta, 'utf8')).result[campo]
-}
-
-function captura(): Captura {
-  return {
-    bots: { filas: leer('bots', 'bots') },
-    trabajos: { Huerto: { filas: leer('trabajos', 'workspaces') } },
-    pendientes: { filas: leer('pendientes', 'items') },
-    worktrees: { filas: leer('worktrees', 'worktrees') },
-    workers: { filas: leer('workers', 'workers') },
-    mensajes: { filas: leer('mensajes', 'messages') },
-    automatizaciones: { filas: leer('automatizaciones', 'automations') },
-  }
-}
 
 test('Une observaciones por id y conserva el lanzador y la hora del mensaje', () => {
   const datos = captura()
@@ -36,6 +19,7 @@ test('Une observaciones por id y conserva el lanzador y la hora del mensaje', ()
   const vivo = grafo.nodos.find((nodo) => nodo.tarea === 'Revisar el huerto')!
   assert.ok(vivo)
   assert.equal(vivo.estado, textos.enCurso)
+  assert.deepEqual(vivo.destino, { terminalId: 'term_a', workspaceId: 'taller' })
   assert.equal(grafo.aristas.filter((a) => a.tipo === 'lanzamiento' && a.destino === vivo.id).length, 1)
   assert.ok(grafo.aristas.some((a) =>
     a.tipo === 'lanzamiento' && a.origen === 'bot:bot-2' && a.destino === vivo.id))
