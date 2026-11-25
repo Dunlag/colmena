@@ -1,5 +1,5 @@
 import type { OrcaFrameApi } from 'orca/frame'
-import { mensajes, tipoMensaje, ultimos30Segundos, VENTANA_FLUJO_MS, type Mensaje } from './flujos'
+import { mensajes, tipoMensaje, ultimos30Segundos, VENTANA_FLUJO_MS } from './flujos'
 import { curva, disponer } from './layout'
 import type { Grafo, Nodo, Situacion } from './normalizar'
 import { LATIDO_VISTA_MS } from './protocol'
@@ -69,13 +69,11 @@ export function montarPestana(orca: OrcaFrameApi) {
   let necesitaDibujo = false
   let aviso = ''
   let visibleEnOrca = false
-  let frame = 0
   let frameTamano = 0
   let anchoArbol = 0
   let reloj = 0
   let latido = 0
-  let animables: { circulo: SVGCircleElement; camino: SVGPathElement; longitud: number; mensaje: Mensaje; fase: number }[] = []
-  let pulsos: HTMLElement[] = []
+  let puntosRecientes: { control: HTMLElement; vence: number }[] = []
   let fechas: { hora: number; control: HTMLTimeElement }[] = []
 
   const app = elemento('main', 'colmena')
@@ -92,7 +90,16 @@ export function montarPestana(orca: OrcaFrameApi) {
   const avisoUI = elemento('p', 'aviso')
   avisoUI.setAttribute('role', 'status')
   avisoUI.hidden = true
-  cabecera.append(encabezado, miembros, avisoUI)
+  const leyendaArbol = elemento('ul', 'leyenda-arbol')
+  leyendaArbol.setAttribute('aria-label', textos.leyendaArbol)
+  for (const [estilo, etiqueta] of [
+    ['activa', textos.lineaActiva], ['reposo', textos.lineaEnReposo], ['mensaje', textos.puntoMensaje],
+  ]) {
+    const item = elemento('li', '', etiqueta)
+    item.dataset.estilo = estilo
+    leyendaArbol.append(item)
+  }
+  cabecera.append(encabezado, miembros, avisoUI, leyendaArbol)
   const contenido = elemento('div', 'contenido')
   const panelArbol = elemento('section', 'arbol')
   panelArbol.setAttribute('aria-label', textos.arbol)
@@ -216,6 +223,10 @@ export function montarPestana(orca: OrcaFrameApi) {
     const tipo = nodo.tipo
     const situacion = estados[nodo.situacion].etiqueta
     control.dataset.tipo = tipo
+    control.dataset.situacion = nodo.situacion
+    if (tipo === 'worker' && nodo.situacion === 'trabajando' && completo(nodo.maquina)) {
+      control.classList.add('pulso')
+    }
     control.setAttribute('aria-label', textos.etiquetaNodo(nodo.nombre, situacion))
     if (nodo.atenuado) control.classList.add('atenuado')
     if (!nodo.destino || (nodo.maquina.startsWith('runtime:') && !nodo.destino.terminalId)) {
@@ -249,7 +260,6 @@ export function montarPestana(orca: OrcaFrameApi) {
     punto.setAttribute('aria-hidden', 'true')
     estado.prepend(punto)
     estado.title = nodo.estado
-    if (completo(nodo.maquina) && nodo.situacion === 'trabajando') pulsos.push(punto)
     const fecha = elemento('time', 'secundario')
     if (nodo.desde !== null) {
       fecha.dateTime = new Date(nodo.desde).toISOString()
@@ -282,8 +292,7 @@ export function montarPestana(orca: OrcaFrameApi) {
       return
     }
     const activo = (document.activeElement as HTMLElement | null)?.dataset.foco
-    animables = []
-    pulsos = []
+    puntosRecientes = []
     fechas = []
     anchoArbol = panelArbol.clientWidth
     const { bandas, posiciones, padres, ancho, alto } = disponer(grafo, anchoArbol)
@@ -315,22 +324,27 @@ export function montarPestana(orca: OrcaFrameApi) {
     }
 
     const curvas = svg('svg', { viewBox: `0 0 ${ancho} ${alto}`, 'aria-hidden': 'true', class: 'curvas' })
-    const defs = svg('defs', {})
-    for (const tipo of Object.keys(textos.tiposMensaje)) {
-      const flecha = svg('marker', {
-        id: `flecha-${tipo}`, viewBox: '0 0 8 8', refX: 8, refY: 4,
-        markerWidth: 6, markerHeight: 6, orient: 'auto',
-      })
-      flecha.append(svg('path', { d: 'M 0 0 L 8 4 L 0 8 Z', 'data-mensaje': tipo, class: 'flecha' }))
-      defs.append(flecha)
-    }
-    curvas.append(defs)
+    const enReposo = svg('g', {})
+    const enCurso = svg('g', {})
+    curvas.append(enReposo, enCurso)
     for (const [hijo, padre] of padres) {
       const desde = posiciones.get(padre)!
       const hasta = posiciones.get(hijo)!
-      curvas.append(svg('path', {
-        d: curva(desde, hasta), class: 'conexion', 'data-tipo': hasta.nodo.tipo,
-      }))
+      const d = curva(desde, hasta)
+      const activo = hasta.nodo.situacion === 'trabajando'
+      const grupo = svg('g', { class: activo ? 'en-curso' : 'en-reposo' })
+      const ruta = textos.recorrido(desde.nodo.nombre, hasta.nodo.nombre)
+      const diana = svg('path', { d, class: 'conexion-diana' })
+      const titulo = svg('title', {})
+      titulo.textContent = textos.etiquetaNodo(ruta, estados[hasta.nodo.situacion].etiqueta)
+      diana.append(titulo)
+      grupo.append(svg('path', { d, class: 'conexion' }))
+      if (activo && hasta.nodo.tipo === 'worker' && completo(hasta.nodo.maquina)) {
+        grupo.append(svg('path', { d, class: 'avance', pathLength: 100 }))
+      }
+      grupo.append(diana)
+      const capa = activo ? enCurso : enReposo
+      capa.append(grupo)
     }
     elementos.append(curvas)
     const ordenBandas = new Map(bandas.map((banda, i) => [banda.id, i]))
@@ -361,46 +375,34 @@ export function montarPestana(orca: OrcaFrameApi) {
     listaFlujos.replaceChildren(lista)
     vacio.hidden = entradas.length > 0
 
-    const puntos = svg('g', {})
     const recorridos = new Set<string>()
     const porPareja = new Map<string, number>()
-    const recientes = new Set(ultimos30Segundos(entradas, Date.now()))
-    const viajes = entradas.slice(0, CANTIDAD_FLUJOS).flatMap((mensaje, indice) => {
-      const { origen, destino } = mensaje
-      const tipo = tipoMensaje(mensaje)
+    const ahora = Date.now()
+    for (const mensaje of ultimos30Segundos(entradas, ahora).slice(0, CANTIDAD_FLUJOS)) {
+      const { origen, destino, hora } = mensaje
       const desde = posiciones.get(origen)
       const hasta = posiciones.get(destino)
-      if (!desde || !hasta) return []
+      if (!desde || !hasta) continue
+      const tipo = tipoMensaje(mensaje)
       const id = JSON.stringify([origen, destino, tipo])
-      if (recorridos.has(id)) return []
+      if (recorridos.has(id)) continue
       recorridos.add(id)
       const pareja = JSON.stringify([origen, destino].sort())
       const carril = porPareja.get(pareja) ?? 0
       porPareja.set(pareja, carril + 1)
-      const desvio = (carril % 2 === 0 ? 1 : -1) * (10 + Math.floor(carril / 2) * 7)
-      const camino = svg('path', {
-        d: curva(desde, hasta, desvio), class: 'trayecto', 'data-mensaje': tipo,
-        'marker-end': `url(#flecha-${tipo})`,
-      })
-      curvas.append(camino)
-      const circulo = svg('circle', { r: 3.5, class: 'viaje', 'data-mensaje': tipo })
-      puntos.append(circulo)
-      return [{ circulo, camino, mensaje, fase: indice * 197,
-        animar: recientes.has(mensaje) && completo(desde.nodo.maquina) && completo(hasta.nodo.maquina) }]
-    })
-    curvas.append(puntos)
-    superficie.replaceChildren(elementos)
-    animables = viajes.flatMap((viaje) => {
-      const longitud = viaje.camino.getTotalLength()
-      if (viaje.animar) {
-        viaje.circulo.classList.add('viaje-animado')
-        return [{ ...viaje, longitud }]
+      const desvio = (carril % 2 === 0 ? 1 : -1) * (7 + Math.floor(carril / 2) * 6)
+      const punto = elemento('span', 'viaje')
+      punto.dataset.mensaje = tipo
+      punto.setAttribute('aria-hidden', 'true')
+      punto.style.offsetPath = `path("${curva(desde, hasta, desvio)}")`
+      if (completo(desde.nodo.maquina) && completo(hasta.nodo.maquina)) {
+        punto.classList.add('viaje-animado')
+        punto.style.animationDelay = `-${(ahora - hora) % 4400}ms`
       }
-      const punto = viaje.camino.getPointAtLength(longitud * .72)
-      viaje.circulo.setAttribute('cx', String(punto.x))
-      viaje.circulo.setAttribute('cy', String(punto.y))
-      return []
-    })
+      elementos.append(punto)
+      puntosRecientes.push({ control: punto, vence: hora + VENTANA_FLUJO_MS })
+    }
+    superficie.replaceChildren(elementos)
     if (activo) {
       for (const control of superficie.querySelectorAll<HTMLElement>('[data-foco]')) {
         if (control.dataset.foco === activo) control.focus({ preventScroll: true })
@@ -411,39 +413,17 @@ export function montarPestana(orca: OrcaFrameApi) {
 
   function invalidar() {
     necesitaDibujo = true
-    if (visible()) {
-      dibujar()
-      pedirFrame()
-    }
+    dibujar()
   }
 
-  function pedirFrame() {
-    if (visible() && !frame && (animables.length || pulsos.length)) frame = requestAnimationFrame(animar)
-  }
-
-  function animar(t: number) {
-    frame = 0
-    if (!visible()) return
+  function expirarPuntos() {
+    if (!puntosRecientes.length) return
     const ahora = Date.now()
-    let caduco = false
-    for (const viaje of animables) {
-      const edad = ahora - viaje.mensaje.hora
-      if (edad >= VENTANA_FLUJO_MS) {
-        caduco = true
-        break
-      }
-      const avance = ((Math.max(0, edad) + viaje.fase) % 4400) / 4400
-      const punto = viaje.camino.getPointAtLength(avance * viaje.longitud)
-      viaje.circulo.setAttribute('cx', String(punto.x))
-      viaje.circulo.setAttribute('cy', String(punto.y))
-    }
-    if (caduco) {
-      invalidar()
-      return
-    }
-    const opacidad = 0.78 + 0.22 * Math.sin(t / 440)
-    for (const punto of pulsos) punto.style.opacity = String(opacidad)
-    pedirFrame()
+    puntosRecientes = puntosRecientes.filter(({ control, vence }) => {
+      if (ahora < vence) return true
+      control.remove()
+      return false
+    })
   }
 
   function avisarVisible(visible: boolean) {
@@ -451,18 +431,20 @@ export function montarPestana(orca: OrcaFrameApi) {
   }
 
   function cambiarVisibilidad() {
-    cancelAnimationFrame(frame)
     clearInterval(reloj)
     clearInterval(latido)
-    avisarVisible(visible())
-    frame = 0
+    const enPantalla = visible()
+    app.toggleAttribute('data-visible', enPantalla)
+    avisarVisible(enPantalla)
     cancelAnimationFrame(frameTamano)
     frameTamano = 0
-    if (!visible()) return
+    if (!enPantalla) return
     invalidar()
     latido = window.setInterval(() => avisarVisible(visible()), LATIDO_VISTA_MS)
     reloj = window.setInterval(() => {
-      if (visible()) refrescarHoras()
+      if (!visible()) return
+      refrescarHoras()
+      expirarPuntos()
     }, 1000)
   }
 
@@ -502,6 +484,7 @@ export function montarPestana(orca: OrcaFrameApi) {
     }
   })
   window.addEventListener('pagehide', () => {
+    app.removeAttribute('data-visible')
     avisarVisible(false)
     vida.abort()
     clearInterval(latido)
@@ -509,7 +492,6 @@ export function montarPestana(orca: OrcaFrameApi) {
     observador.disconnect()
     tamano.disconnect()
     cancelAnimationFrame(frameTamano)
-    cancelAnimationFrame(frame)
     clearInterval(reloj)
   }, { once: true })
 }
