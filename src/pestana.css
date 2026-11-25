@@ -235,6 +235,8 @@ select {
   background: color-mix(in srgb, var(--tarjeta), var(--lienzo) 32%);
   box-shadow: none;
 }
+.nodo[data-tipo="grupo"] { --tipo: var(--secundario); cursor: pointer; border-style: dashed; }
+.nodo[data-tipo="grupo"][aria-expanded="true"] { border-style: solid; }
 .nodo[data-tipo="worker"][data-situacion="terminado"] {
   --tipo: var(--secundario);
   border-color: var(--borde);

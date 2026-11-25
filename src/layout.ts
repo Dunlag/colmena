@@ -30,7 +30,9 @@ type Banda = {
   automatizacionesY?: number
 }
 
-export function disponer(grafo: Pick<Grafo, 'nodos' | 'aristas'>, disponible = 850) {
+export function disponer(
+  grafo: Pick<Grafo, 'nodos' | 'aristas'>, disponible = 850, desplegados: ReadonlySet<string> = new Set(),
+) {
   const nodos = new Map(grafo.nodos.filter(({ tipo }) => tipo !== 'maquina').map((nodo) => [nodo.id, nodo]))
   const maquinas = new Map(grafo.nodos.filter(({ tipo }) => tipo === 'maquina').map((nodo) => [nodo.maquina, nodo]))
   const raiz = [...nodos.values()].find(({ tipo }) => tipo === 'tu')
@@ -71,6 +73,40 @@ export function disponer(grafo: Pick<Grafo, 'nodos' | 'aristas'>, disponible = 8
     return undefined
   }
 
+  // Los workers terminados de cada bot se pliegan en UNA tarjeta '+N terminados'; desplegada, vuelven a salir debajo.
+  const porPadre = new Map<string, Nodo[]>()
+  const grupoDe = new Map<string, string>()
+  for (const nodo of nodos.values()) {
+    if (nodo.tipo !== 'worker' || nodo.situacion !== 'terminado') continue
+    const clave = botDe(nodo) ?? padres.get(nodo.id) ?? nodo.maquina
+    porPadre.set(clave, [...(porPadre.get(clave) ?? []), nodo])
+    grupoDe.set(nodo.id, `grupo:${clave}`)
+  }
+  const grupos: { nodo: Nodo; miembros: Nodo[] }[] = []
+  const escondidos = new Set<string>()
+  for (const [padre, miembros] of porPadre) {
+    const id = `grupo:${padre}`
+    const nodo: Nodo = {
+      id, tipo: 'grupo', nombre: textos.terminadosGrupo(miembros.length), estado: textos.terminado,
+      situacion: 'terminado', maquina: miembros[0].maquina, tarea: null, desde: null,
+      miembros: miembros.length, atenuado: true,
+    }
+    grupos.push({ nodo, miembros })
+    for (const miembro of miembros) escondidos.add(miembro.id)
+    if (nodos.has(padre)) padres.set(id, padre)
+    else if (raiz) padres.set(id, raiz.id)
+  }
+  // Un hijo cuyo padre queda escondido cuelga del primer ancestro visible.
+  for (const [hijo, padre] of padres) {
+    let visible: string | undefined = padre
+    while (visible && escondidos.has(visible)) visible = padres.get(visible)
+    if (visible) padres.set(hijo, visible)
+    else padres.delete(hijo)
+  }
+  for (const id of escondidos) {
+    if (!desplegados.has(grupoDe.get(id)!)) padres.delete(id)
+  }
+
   const hosts = new Set([...maquinas.keys(), ...[...nodos.values()].map((nodo) => nodo.maquina)])
   const orden = [...hosts].sort((a, b) => {
     if (a === LOCAL) return -1
@@ -89,8 +125,13 @@ export function disponer(grafo: Pick<Grafo, 'nodos' | 'aristas'>, disponible = 8
     const miembros = [...nodos.values()].filter((nodo) => nodo.maquina === id)
     const izquierda = miembros.filter((nodo) => nodo.tipo === 'tu' || nodo.id === bobs.get(id))
     const centro = miembros.filter((nodo) => nodo.tipo === 'bot' && nodo.id !== bobs.get(id))
-    const derecha = miembros.filter((nodo) => nodo.tipo === 'worker' ||
-      (nodo.tipo === 'automatizacion' && centro.some((bot) => botDe(nodo) === bot.id)))
+    const sueltos = miembros.filter((nodo) => !escondidos.has(nodo.id))
+    const derecha = [
+      ...sueltos.filter((nodo) => nodo.tipo === 'worker' ||
+        (nodo.tipo === 'automatizacion' && centro.some((bot) => botDe(nodo) === bot.id))),
+      ...grupos.filter(({ nodo }) => nodo.maquina === id).flatMap(({ nodo, miembros: dentro }) =>
+        [nodo, ...(desplegados.has(nodo.id) ? dentro : [])]),
+    ]
     const aparte = miembros.filter((nodo) => nodo.tipo === 'automatizacion' && !derecha.includes(nodo))
     const banda: Banda = { id, nombre: maquinas.get(id)?.nombre ?? id, estado: maquinas.get(id)?.estado,
       y, ancho: ancho - 2 * MARGEN, alto: 0 }
@@ -129,7 +170,8 @@ export function disponer(grafo: Pick<Grafo, 'nodos' | 'aristas'>, disponible = 8
     y += banda.alto + MARGEN
   }
 
-  return { bandas, posiciones, padres, ancho, alto: y }
+  const dibujadas = [...padres].filter(([hijo, padre]) => posiciones.has(hijo) && posiciones.has(padre)).length
+  return { bandas, posiciones, padres, ancho, alto: y, recuento: { nodos: posiciones.size, conexiones: dibujadas } }
 }
 
 export function curva(origen: Posicion, destino: Posicion, desvio = 0): string {

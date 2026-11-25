@@ -15,6 +15,7 @@ const tipos = {
   bot: { etiqueta: textos.bot, icono: 'M9 3v3M6 11h.1m5.8 0h.1M4 6h10a1 1 0 0 1 1 1v7H3V7a1 1 0 0 1 1-1ZM1.5 10v2m15-2v2' },
   worker: { etiqueta: textos.worker, icono: 'M3 4h12v10H3ZM6 7l2 2-2 2m4 0h2' },
   automatizacion: { etiqueta: textos.automatizacion, icono: 'M15 9a6 6 0 1 0-6 6h2m-2-9v3l2 1m1 4 2-2 2 2' },
+  grupo: { etiqueta: textos.terminado, icono: 'M3 6h12M3 9h12M3 12h12' },
   maquina: { etiqueta: textos.maquina, icono: 'M3 4h12v8H3Zm4 11h4m-2-3v3' },
 }
 
@@ -64,6 +65,7 @@ export function montarPestana(orca: OrcaFrameApi) {
   const niveles = new Map<string, Nivel>()
   const cargando = new Set<string>()
   const guardando = new Set<string>()
+  const desplegados = new Set<string>()
   let grafo: Grafo | undefined
   let firma = ''
   let necesitaDibujo = false
@@ -229,9 +231,17 @@ export function montarPestana(orca: OrcaFrameApi) {
     }
     control.setAttribute('aria-label', textos.etiquetaNodo(nodo.nombre, situacion))
     if (nodo.atenuado) control.classList.add('atenuado')
-    if (!nodo.destino || (nodo.maquina.startsWith('runtime:') && !nodo.destino.terminalId)) {
+    if (tipo === 'grupo') {
+      const abierto = desplegados.has(nodo.id)
+      control.setAttribute('aria-expanded', String(abierto))
+      control.title = abierto ? textos.grupoDesplegado : textos.grupoPlegado
+      control.addEventListener('click', () => {
+        if (!desplegados.delete(nodo.id)) desplegados.add(nodo.id)
+        invalidar()
+      })
+    } else if (!nodo.destino || (nodo.maquina.startsWith('runtime:') && !nodo.destino.terminalId)) {
       control.setAttribute('aria-disabled', 'true')
-      control.title = textos.sinDestino
+      control.title = tipo === 'automatizacion' ? textos.sinAperturaAutomatizacion : textos.sinDestino
     } else {
       control.addEventListener('click', async () => {
         informar()
@@ -295,13 +305,13 @@ export function montarPestana(orca: OrcaFrameApi) {
     puntosRecientes = []
     fechas = []
     anchoArbol = panelArbol.clientWidth
-    const { bandas, posiciones, padres, ancho, alto } = disponer(grafo, anchoArbol)
+    const { bandas, posiciones, padres, ancho, alto, recuento } = disponer(grafo, anchoArbol, desplegados)
     pintarMiembros(grafo)
     const elementos = document.createDocumentFragment()
     const nombres = new Map(bandas.map((banda) => [banda.id, banda.nombre]))
     superficie.style.width = `${ancho}px`
     superficie.style.height = `${alto}px`
-    const leyenda = textos.recuento(grafo.recuento.nodos, grafo.recuento.conexiones)
+    const leyenda = textos.recuento(recuento.nodos, recuento.conexiones)
     resumen.textContent = grafo.fallos.length ? `${leyenda} · ${textos.errores(grafo.fallos.length)}` : leyenda
 
     for (const banda of bandas) {
@@ -356,12 +366,13 @@ export function montarPestana(orca: OrcaFrameApi) {
       elementos.append(control)
     }
 
+    const nombreNodo = new Map(grafo.nodos.map((nodo) => [nodo.id, nodo.nombre]))
     const entradas = mensajes(grafo.aristas)
     const lista = document.createDocumentFragment()
     for (const mensaje of entradas.slice(0, CANTIDAD_FLUJOS)) {
       const { origen, destino, hora, asunto } = mensaje
       const tipo = tipoMensaje(mensaje)
-      const ruta = textos.recorrido(posiciones.get(origen)?.nodo.nombre ?? origen, posiciones.get(destino)?.nodo.nombre ?? destino)
+      const ruta = textos.recorrido(nombreNodo.get(origen) ?? origen, nombreNodo.get(destino) ?? destino)
       const item = elemento('li', 'flujo')
       item.dataset.mensaje = tipo
       const encabezado = elemento('div', 'encabezado-flujo')

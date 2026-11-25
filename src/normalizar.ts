@@ -3,6 +3,7 @@ import {
   type Captura, type CapturaHost, type FalloFuente, type Fila,
 } from './datos'
 import { depurarModelos, DIA_MS, inventarioTerminales, type Modelos, type RegistroModelo } from './modelo'
+import { disponer } from './layout'
 import { textos } from './textos'
 
 const TU = 'tu'
@@ -14,7 +15,7 @@ type GrafoHost = Omit<Grafo, 'nodos' | 'recuento'> & { nodos: NodoVivo[] }
 
 export type Nodo = {
   id: string
-  tipo: 'tu' | 'bob' | 'bot' | 'worker' | 'automatizacion' | 'maquina'
+  tipo: 'tu' | 'bob' | 'bot' | 'worker' | 'automatizacion' | 'maquina' | 'grupo'
   nombre: string
   estado: string
   /** Estado normalizado para pintar icono y color; `estado` es el texto de Orca ya en español. */
@@ -28,6 +29,8 @@ export type Nodo = {
   destino?: Destino
   atenuado?: true
   pendientes?: Pendiente[]
+  /** Solo en tipo 'grupo' (lo crea layout): cuántos workers terminados esconde. */
+  miembros?: number
 }
 
 export type Situacion = 'trabajando' | 'esperando' | 'terminado'
@@ -50,7 +53,7 @@ export type Grafo = {
   aristas: Arista[]
   generado: number
   fallos: FalloFuente[]
-  /** Recuento único para panel y pestaña: nodos visibles (sin máquinas) y conexiones del árbol. */
+  /** Recuento con los terminados plegados: tarjetas dibujadas (sin máquinas) y líneas del árbol que se dibujan. */
   recuento: { nodos: number; conexiones: number }
 }
 
@@ -272,9 +275,7 @@ export function normalizar(captura: Captura, ahora: number, guardado: Modelos = 
     enlaces.add(llave)
     return [{ ...arista, origen, destino }]
   })
-  const visibles = finales.filter(({ tipo }) => tipo !== 'maquina').length
-  // Todo nodo visible cuelga de TÚ, así que las conexiones del árbol son nodos - 1.
-  return { ...grafo, nodos: finales, aristas, recuento: { nodos: visibles, conexiones: Math.max(0, visibles - 1) } }
+  return { ...grafo, nodos: finales, aristas, recuento: disponer({ nodos: finales, aristas }).recuento }
 }
 
 function normalizarHost(
@@ -566,17 +567,12 @@ function normalizarHost(
     const bot = objeto(auto.bot)
     const lanzamiento = objeto(objeto(bot.agentSetup).launch)
     const modelo = texto(auto.model, objeto(auto.agentSetup).model, lanzamiento.model)
-    const terminalId = texto(auto.terminalHandle, auto.lastRunTerminalHandle)
-    const workspaceId = texto(auto.workspaceId, auto.worktreeId, auto.lastRunWorkspaceId)
     nodos.set(id, {
       id, tipo: 'automatizacion', nombre: linea(auto.name) ?? claveAuto,
       estado: auto.enabled ? textos.activa : textos.desactivada,
       maquina,
       tarea: linea(auto.prompt, auto.name), desde: fecha(auto.lastRunAt, auto.createdAt),
       ...(agente && { agente }), ...(modelo && { modelo }),
-      ...((terminalId || workspaceId) && {
-        destino: { ...(terminalId && { terminalId }), ...(workspaceId && { workspaceId }) },
-      }),
     })
     const origen = bots.get(clave(base, texto(bot.botId) ?? ''))
     if (origen) conectar({ tipo: 'agrupa', origen, destino: id })

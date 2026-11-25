@@ -28,6 +28,8 @@ test('Une observaciones por id y conserva el lanzador y la hora del mensaje', ()
     a.hora === Date.parse('2026-11-25T10:01:00.000Z')))
   assert.equal(grafo.nodos.find((nodo) => nodo.tipo === 'tu')?.pendientes?.[0].tarea, 'Confirmar la fecha')
   assert.ok(grafo.nodos.some((nodo) => nodo.tipo === 'automatizacion' && nodo.nombre === 'Riego'))
+  // Orca no deja abrir una automatización desde un plugin: la tarjeta no promete un destino.
+  assert.ok(grafo.nodos.filter((nodo) => nodo.tipo === 'automatizacion').every((nodo) => !nodo.destino))
   assert.ok(grafo.aristas.some((a) => a.origen === 'maquina:local' && a.destino === vivo.id))
 })
 
@@ -103,8 +105,12 @@ test('Cada nodo lleva tipo, situación normalizada y un recuento único', () => 
   assert.equal(situacion('worker', textos.enCurso), 'trabajando')
   assert.equal(situacion('worker', textos.finalizado), 'terminado')
   assert.equal(situacion('bot', textos.disponible), 'esperando')
-  const visibles = grafo.nodos.filter((n) => n.tipo !== 'maquina').length
-  assert.deepEqual(grafo.recuento, { nodos: visibles, conexiones: visibles - 1 })
+  // Con los terminados plegados el grupo cuenta como un nodo y solo cuentan las líneas que se dibujan.
+  const terminados = grafo.nodos.filter((n) => n.tipo === 'worker' && n.situacion === 'terminado').length
+  const visibles = grafo.nodos.filter((n) => n.tipo !== 'maquina').length - terminados + (terminados ? 1 : 0)
+  assert.equal(grafo.recuento.nodos, visibles)
+  assert.ok(grafo.recuento.conexiones <= grafo.recuento.nodos - 1)
+  assert.ok(grafo.recuento.conexiones < grafo.aristas.length || grafo.aristas.length === 0)
 })
 
 test('La tarea nunca muestra la cabecera cruda ni ids de sesión', () => {

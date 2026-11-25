@@ -67,7 +67,7 @@ test('Descarta un ciclo y conserva una sola conexión por hijo', () => {
       { tipo: 'agrupa', origen: 'tu', destino: 'bot:bob-1' },
     ],
   })
-  for (const nodo of nodos.filter(({ tipo }) => tipo === 'bob' || tipo === 'bot' || tipo === 'worker')) {
+  for (const nodo of nodos.filter(({ tipo, situacion }) => tipo === 'bob' || tipo === 'bot' || (tipo === 'worker' && situacion !== 'terminado'))) {
     assert.ok(padres.has(nodo.id))
   }
   for (const id of padres.keys()) {
@@ -77,4 +77,27 @@ test('Descarta un ciclo y conserva una sola conexión por hijo', () => {
       vistos.add(padre)
     }
   }
+})
+
+test('Los workers terminados de un bot se pliegan en una tarjeta y se despliegan con su id', () => {
+  const base = (id: string, tipo: Nodo['tipo'], situacion: Nodo['situacion']): Nodo => ({
+    id, tipo, nombre: id, estado: situacion, situacion, desde: null, tarea: null, maquina: LOCAL,
+  })
+  const nodos = [
+    base('tu', 'tu', 'esperando'), base('bob', 'bob', 'esperando'), base('bot', 'bot', 'esperando'),
+    base('w1', 'worker', 'trabajando'), base('w2', 'worker', 'terminado'), base('w3', 'worker', 'terminado'),
+  ]
+  const aristas: Arista[] = ['bob', 'bot'].map((destino, i) => ({
+    tipo: 'agrupa', origen: i ? 'bob' : 'tu', destino,
+  }))
+  for (const destino of ['w1', 'w2', 'w3']) aristas.push({ tipo: 'lanzamiento', origen: 'bot', destino })
+  const plegado = disponer({ nodos, aristas })
+  assert.deepEqual([...plegado.posiciones.keys()].sort(), ['bob', 'bot', 'grupo:bot', 'tu', 'w1'])
+  assert.equal(plegado.posiciones.get('grupo:bot')?.nodo.miembros, 2)
+  assert.deepEqual(plegado.recuento, { nodos: 5, conexiones: 4 })
+  assert.equal(plegado.padres.size, 4)
+  const abierto = disponer({ nodos, aristas }, 850, new Set(['grupo:bot']))
+  assert.equal(abierto.posiciones.size, 7)
+  assert.deepEqual(abierto.recuento, { nodos: 7, conexiones: 6 })
+  assert.ok(abierto.posiciones.get('w2')!.y > abierto.posiciones.get('grupo:bot')!.y)
 })
