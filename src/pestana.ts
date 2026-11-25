@@ -70,6 +70,8 @@ export function montarPestana(orca: OrcaFrameApi) {
   let aviso = ''
   let visibleEnOrca = false
   let frame = 0
+  let frameTamano = 0
+  let anchoArbol = 0
   let reloj = 0
   let latido = 0
   let animables: { circulo: SVGCircleElement; camino: SVGPathElement; longitud: number; mensaje: Mensaje; fase: number }[] = []
@@ -283,7 +285,8 @@ export function montarPestana(orca: OrcaFrameApi) {
     animables = []
     pulsos = []
     fechas = []
-    const { bandas, posiciones, padres, ancho, alto } = disponer(grafo, panelArbol.clientWidth)
+    anchoArbol = panelArbol.clientWidth
+    const { bandas, posiciones, padres, ancho, alto } = disponer(grafo, anchoArbol)
     pintarMiembros(grafo)
     const elementos = document.createDocumentFragment()
     const nombres = new Map(bandas.map((banda) => [banda.id, banda.nombre]))
@@ -453,6 +456,8 @@ export function montarPestana(orca: OrcaFrameApi) {
     clearInterval(latido)
     avisarVisible(visible())
     frame = 0
+    cancelAnimationFrame(frameTamano)
+    frameTamano = 0
     if (!visible()) return
     invalidar()
     latido = window.setInterval(() => avisarVisible(visible()), LATIDO_VISTA_MS)
@@ -477,7 +482,13 @@ export function montarPestana(orca: OrcaFrameApi) {
     cambiarVisibilidad()
   })
   observador.observe(document.documentElement)
-  const tamano = new ResizeObserver(invalidar)
+  const tamano = new ResizeObserver(() => {
+    if (!visible() || frameTamano || panelArbol.clientWidth === anchoArbol) return
+    frameTamano = requestAnimationFrame(() => {
+      frameTamano = 0
+      invalidar()
+    })
+  })
   tamano.observe(panelArbol)
   document.addEventListener('visibilitychange', cambiarVisibilidad, opciones)
   movimiento.addEventListener('change', invalidar, opciones)
@@ -497,6 +508,7 @@ export function montarPestana(orca: OrcaFrameApi) {
     cambios.dispose()
     observador.disconnect()
     tamano.disconnect()
+    cancelAnimationFrame(frameTamano)
     cancelAnimationFrame(frame)
     clearInterval(reloj)
   }, { once: true })
