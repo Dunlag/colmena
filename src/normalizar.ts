@@ -9,22 +9,32 @@ const TU = 'tu'
 
 type Pendiente = { id: string; tarea: string; desde: number | null }
 
+type NodoVivo = Omit<Nodo, 'situacion'>
+type GrafoHost = Omit<Grafo, 'nodos' | 'recuento'> & { nodos: NodoVivo[] }
+
 export type Nodo = {
   id: string
-  tipo: 'tu' | 'bot' | 'worker' | 'automatizacion' | 'maquina'
+  tipo: 'tu' | 'bob' | 'bot' | 'worker' | 'automatizacion' | 'maquina'
   nombre: string
   estado: string
+  /** Estado normalizado para pintar icono y color; `estado` es el texto de Orca ya en español. */
+  situacion: Situacion
   maquina: string
   tarea: string | null
   desde: number | null
   agente?: string
+  botId?: string
   modelo?: string
   destino?: Destino
   atenuado?: true
   pendientes?: Pendiente[]
 }
 
+export type Situacion = 'trabajando' | 'esperando' | 'terminado'
+
 export type Destino = { terminalId?: string; workspaceId?: string }
+
+export type TipoMensaje = 'encargo' | 'pregunta' | 'estado' | 'resultado'
 
 export type Arista = {
   tipo: 'agrupa' | 'lanzamiento' | 'mensaje'
@@ -32,6 +42,7 @@ export type Arista = {
   destino: string
   hora?: number
   asunto?: string
+  mensaje?: TipoMensaje
 }
 
 export type Grafo = {
@@ -39,13 +50,15 @@ export type Grafo = {
   aristas: Arista[]
   generado: number
   fallos: FalloFuente[]
+  /** Recuento único para panel y pestaña: nodos visibles (sin máquinas) y conexiones del árbol. */
+  recuento: { nodos: number; conexiones: number }
 }
 
 const estados: Record<string, string> = {
   working: textos.enCurso, running: textos.enCurso, active: textos.enCurso,
   waiting: textos.espera, idle: textos.espera, blocked: textos.bloqueado,
   ready: textos.pendiente, queued: textos.pendiente, planned: textos.pendiente,
-  dispatched: textos.pendiente,
+  dispatched: textos.pendiente, permission: textos.bloqueado,
   done: textos.finalizado, succeeded: textos.finalizado, completed: textos.finalizado,
   failed: textos.fallido, failure: textos.fallido, lost: textos.fallido,
   stopped: textos.cancelado, canceled: textos.cancelado, cancelled: textos.cancelado,
@@ -60,8 +73,37 @@ function estado(valor: string | null): string {
   return valor && Object.hasOwn(estados, valor) ? estados[valor] : textos.desconocido
 }
 
+const trabajando = new Set<string>([textos.enCurso])
+const terminado = new Set<string>([textos.finalizado, textos.fallido, textos.cancelado])
+
+function situacion(texto: string): Situacion {
+  return trabajando.has(texto) ? 'trabajando' : terminado.has(texto) ? 'terminado' : 'esperando'
+}
+
 function linea(...valores: unknown[]): string | null {
   return texto(...valores)?.replace(/\s+/g, ' ').slice(0, 240) ?? null
+}
+
+function asuntoLimpio(...valores: unknown[]): string | null {
+  for (const valor of valores) {
+    const entrada = texto(valor)
+    if (!entrada) continue
+    const asunto = /(?:^|[─\n]\s*)Subject:\s*([^\r\n]+)/i.exec(entrada)?.[1]
+    const lineas = (asunto ?? entrada).split(/\r?\n/)
+    for (const lineaUtil of lineas) {
+      if (/^\s*[─-]*\s*(?:from|to|subject):/i.test(lineaUtil)) continue
+      const limpia = linea(lineaUtil.replace(/\borca_session_id:[\w-]+/gi, '').trim())
+      if (limpia && !/^[-─\s()]+$/.test(limpia)) return limpia
+    }
+  }
+  return null
+}
+
+function tipoMensaje(tipo: unknown): TipoMensaje {
+  if (tipo === 'handoff' || tipo === 'dispatch' || tipo === 'task') return 'encargo'
+  if (tipo === 'question') return 'pregunta'
+  if (tipo === 'worker_done' || tipo === 'result') return 'resultado'
+  return 'estado'
 }
 
 function sesion(valor: unknown): string | null {
@@ -105,17 +147,17 @@ function desdeAgente(agente: Fila, espacio: Fila, maquina: string): Observacion 
   const status = texto(principal.state, agente.state)
   const desde = fecha(principal.stateStartedAt, agente.stateStartedAt, agente.updatedAt)
   return {
-    ids: claves(sesion(agente.orcaSessionId), agente.address, agente.terminalHandle, agente.paneKey, agente.id),
+    ids: claves(sesion(agente.orcaSessionId), agente.address, agente.terminalHandle, agente.terminalId, agente.paneKey, agente.id),
     maquina,
     workspace: texto(espacio.worktreeId),
     workspaceNavegable: texto(objeto(espacio.identity).key),
     terminal: texto(agente.terminalHandle, agente.terminalId),
     padre: texto(agente.parentPaneKey, espacio.parentWorktreeId),
     bot: texto(espacio.bot),
-    nombre: linea(agente.conversationName, agente.displayName, espacio.displayName),
+    nombre: asuntoLimpio(agente.displayName, agente.title, agente.conversationName, espacio.displayName),
     agente: texto(agente.agentType, agente.agent),
     modelo: texto(agente.model),
-    tarea: linea(agente.taskTitle, agente.prompt, espacio.comment),
+    tarea: asuntoLimpio(agente.taskTitle, agente.prompt, espacio.comment),
     estado: status,
     desde,
     fin: status && cerrados.has(status) ? desde : null,
@@ -140,18 +182,19 @@ function desdeDispatch(worker: Fila, base: string): Observacion {
   const fin = fecha(worker.completedAt, worker.finishedAt, proyeccion.completedAt,
     recurso.releaseCompletedAt, servidor.asOf, evidencia.lastObservedAt)
   return {
-    ids: claves(worker.agentTerminalHandle, recurso.terminalHandle, sesion(proveedor.sessionId),
+    ids: claves(worker.agentTerminalHandle, recurso.terminalHandle, sesion(proveedor.sessionId), sesion(worker.assigneeSession),
       worker.paneKey, id && `dispatch:${id}`, id),
     maquina: enMaquina(servidorId(servidor) ?? texto(host.id, worker.hostId), base),
     workspace: texto(espacio.id, recurso.worktreeId),
     terminal: texto(worker.agentTerminalHandle, recurso.terminalHandle),
-    padre: texto(padre.dispatchId, padre.id, padre.address, worker.coordinatedFrom,
+    padre: texto(worker.creatorDispatch, sesion(worker.creatorSession), worker.creatorHandle,
+      padre.dispatchId, padre.id, padre.address, worker.coordinatedFrom,
       texto(padre.taskId) && `task:${padre.taskId}`),
     bot: texto(worker.bot),
     nombre: linea(worker.title, espacio.name),
     agente: texto(proveedor.id, worker.agent),
     modelo: texto(proveedor.model, worker.model),
-    tarea: linea(worker.taskTitle, worker.title, worker.spec),
+    tarea: asuntoLimpio(worker.taskTitle, worker.title, worker.spec),
     estado: cerrado ?? texto(actividad === 'unknown' ? null : actividad, ...estadosDispatch),
     desde: cerrado ? fin : fecha(worker.startedAt, worker.createdAt, evidencia.lastObservedAt, servidor.asOf),
     fin: cerrado ? fin : null,
@@ -173,7 +216,7 @@ function desdeTrabajo(trabajo: Fila, bot: string, maquina: string, base: string)
     nombre: linea(trabajo.title, trabajo.name),
     agente: texto(agente.agentType, trabajo.agent, agente.id),
     modelo: texto(trabajo.model, agente.model),
-    tarea: linea(trabajo.taskTitle, trabajo.title, trabajo.task, objeto(trabajo.source).title),
+    tarea: asuntoLimpio(trabajo.taskTitle, trabajo.title, trabajo.task, objeto(trabajo.source).title),
     estado: status,
     desde,
     fin: fecha(trabajo.completedAt, trabajo.finishedAt, trabajo.updatedAt),
@@ -182,32 +225,63 @@ function desdeTrabajo(trabajo: Fila, bot: string, maquina: string, base: string)
 
 export function normalizar(captura: Captura, ahora: number, guardado: Modelos = {}): Grafo {
   const modelos = depurarModelos(guardado, ahora)
-  const grafo = normalizarHost(captura, ahora, modelos, LOCAL, textos.local)
+  const remotos = entornosGuardados(captura.entornos).sort((a, b) => a.id.localeCompare(b.id))
+  const hostsRemotos = new Set(remotos.map(({ id }) => maquinaRemota(id)))
+  const worktrees = captura.worktrees?.filas ?? []
+  const grafo = normalizarHost({
+    ...captura,
+    worktrees: captura.worktrees && {
+      ...captura.worktrees,
+      filas: worktrees.filter((fila) => !hostsRemotos.has(String(fila.hostId))),
+    },
+  }, ahora, modelos, LOCAL, textos.local, captura.actividad)
   const nodos = new Map(grafo.nodos.map((nodo) => [nodo.id, nodo]))
   if (captura.entornos?.fallo) grafo.fallos.push(captura.entornos.fallo)
-  for (const { id, nombre } of entornosGuardados(captura.entornos)) {
+  for (const { id, nombre } of remotos) {
+    const maquina = maquinaRemota(id)
+    const vivas = worktrees.filter((fila) => fila.hostId === maquina)
     const remoto = normalizarHost({
       ...captura.remotasVivas?.[id],
       ...captura.remotasOtras?.[id],
-    }, ahora, modelos, maquinaRemota(id), nombre)
+      ...(vivas.length && { worktrees: { filas: vivas } }),
+    }, ahora, modelos, maquina, nombre, captura.actividad)
     for (const nodo of remoto.nodos) nodos.set(nodo.id, nodo)
     grafo.aristas.push(...remoto.aristas)
     grafo.fallos.push(...remoto.fallos)
   }
-  grafo.nodos = [...nodos.values()]
-  const agrupaciones = new Set<string>()
-  grafo.aristas = grafo.aristas.filter(({ tipo, origen, destino }) => {
-    if (tipo !== 'agrupa') return true
-    const llave = clave(origen, destino)
-    if (agrupaciones.has(llave)) return false
-    agrupaciones.add(llave)
-    return true
+  const bots = new Map<string, string>()
+  const aliases = new Map<string, string>()
+  for (const nodo of nodos.values()) {
+    if ((nodo.tipo !== 'bot' && nodo.tipo !== 'bob') || !nodo.botId) continue
+    const previo = bots.get(nodo.botId)
+    if (previo) {
+      aliases.set(nodo.id, previo)
+      nodos.delete(nodo.id)
+    } else {
+      bots.set(nodo.botId, nodo.id)
+    }
+  }
+  const finales = [...nodos.values()].map((nodo): Nodo => ({ ...nodo, situacion: situacion(nodo.estado) }))
+  const enlaces = new Set<string>()
+  const aristas = grafo.aristas.flatMap((arista) => {
+    const origen = aliases.get(arista.origen) ?? arista.origen
+    const destino = aliases.get(arista.destino) ?? arista.destino
+    if (origen === destino || (arista.origen.startsWith('maquina:') && aliases.has(arista.destino))) return []
+    const llave = JSON.stringify([arista.tipo, origen, destino, arista.hora, arista.asunto, arista.mensaje])
+    if (enlaces.has(llave)) return []
+    enlaces.add(llave)
+    return [{ ...arista, origen, destino }]
   })
-  return grafo
+  const visibles = finales.filter(({ tipo }) => tipo !== 'maquina').length
+  // Todo nodo visible cuelga de TÚ, así que las conexiones del árbol son nodos - 1.
+  return { ...grafo, nodos: finales, aristas, recuento: { nodos: visibles, conexiones: Math.max(0, visibles - 1) } }
 }
 
-function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, base: string, nombreBase: string): Grafo {
-  const nodos = new Map<string, Nodo>()
+function normalizarHost(
+  captura: CapturaHost, ahora: number, modelos: Modelos, base: string, nombreBase: string,
+  actividad: Record<string, Fila> = {},
+): GrafoHost {
+  const nodos = new Map<string, NodoVivo>()
   const aristas = new Map<string, Arista>()
   const bots = new Map<string, string>()
   const participantes = new Map<string, string>()
@@ -285,13 +359,13 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     const workspaceId = texto(bot.homeWorktreeId, bot.worktreeId, bot.workspaceId)
     if (nombreServidor && maquina !== base) nombresMaquina.set(maquina, nombreServidor)
     if (!nodos.has(id)) nodos.set(id, {
-      id, tipo: 'bot', nombre, maquina, estado: bot.paused ? textos.pausado : textos.disponible,
+      id, tipo: nombre === textos.bob ? 'bob' : 'bot', botId: original, nombre, maquina, estado: bot.paused ? textos.pausado : textos.disponible,
       tarea: linea(bot.specialty), desde: fecha(bot.updatedAt, bot.createdAt),
       ...(agente && { agente }), ...(modelo && { modelo }),
       ...(workspaceId && { destino: { workspaceId } }),
       ...(base !== LOCAL && maquina === base && nombre === textos.bob && { pendientes }),
     })
-    for (const alias of [original, nombre]) {
+    for (const alias of [original, nombre, nombre.toLowerCase()]) {
       bots.set(clave(maquina, alias), id)
       participantes.set(clave(maquina, `bot:${alias}`), id)
     }
@@ -320,24 +394,35 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
   }
 
   const observaciones: Observacion[] = []
-  for (const espacio of captura.worktrees?.filas ?? []) {
+  const inicios = captura.iniciosBots?.filas ?? []
+  const idsInicio = new Set(inicios.map((fila) => fila.worktreeId))
+  for (const espacio of [...inicios, ...(captura.worktrees?.filas ?? [])]) {
+    if (!espacio.botHome && idsInicio.has(espacio.worktreeId)) continue
     const agentes = filas(espacio.agents)
     const host = espacioId(espacio, base)
     const id = texto(espacio.worktreeId)
-    const propietario = (id && propietarios.get(clave(host, id))) || texto(espacio.bot)
+    const baseCarpeta = texto(espacio.path)?.split(/[\\/]/).at(-1)?.toLowerCase()
+    const casa = espacio.kind === 'folder' && baseCarpeta && (
+      bots.get(clave(host, String(espacio.displayName))) ?? bots.get(clave(host, baseCarpeta))
+    )
+    const esCasa = espacio.botHome === true || Boolean(casa)
+    const propietario = (id && propietarios.get(clave(host, id))) || texto(espacio.bot) ||
+      (casa ? nodos.get(casa)?.botId : undefined)
     const bot = propietario ? bots.get(clave(host, propietario)) : undefined
     const nodoBot = bot ? nodos.get(bot) : undefined
     const espacioBot = texto(objeto(espacio.identity).key, id)
-    if (nodoBot && espacio.botHome === true && espacioBot && !nodoBot.destino) {
+    if (nodoBot && esCasa && espacioBot && !nodoBot.destino) {
       nodoBot.destino = { workspaceId: espacioBot }
     }
 
     for (const agente of agentes) {
-      const visto = desdeAgente(agente, espacio, host)
+      const vivo = actividad[sesion(agente.orcaSessionId) ?? '']
+      const visto = desdeAgente(vivo && (fecha(vivo.stateStartedAt) ?? 0) >= (fecha(agente.updatedAt) ?? 0)
+        ? { ...agente, ...vivo } : agente, espacio, host)
       const panel = texto(agente.paneKey)
       if (panel) visto.ids.push(...(porPanel?.get(clave(host, panel)) ?? []))
       visto.bot = propietario
-      if (espacio.botHome === true && bot && !agente.parentPaneKey) {
+      if (esCasa && bot && !agente.parentPaneKey) {
         for (const alias of visto.ids) {
           participantes.set(clave(visto.maquina, alias), bot)
         }
@@ -404,9 +489,13 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
   const porEspacio = new Map<string, Set<string>>()
   const porTarea = new Map<string, string>()
   for (const [canonico, grupo] of grupos) {
+    if (!grupo.some((visto) => visto.tareaId || visto.bot ||
+      visto.ids.some((id) => id.startsWith('dispatch:'))) && !grupo.some((visto) =>
+      visto.estado && !cerrados.has(visto.estado))) continue
     // La observación del estado más reciente prevalece ante terminales reutilizados.
     grupo.sort((a, b) => (b.desde ?? 0) - (a.desde ?? 0))
-    const actual = grupo.find((visto) => visto.estado) ?? grupo[0]
+    const actual = grupo.find((visto) => visto.tareaId && visto.estado && cerrados.has(visto.estado)) ??
+      grupo.find((visto) => visto.estado) ?? grupo[0]
     const cerrado = actual.estado && cerrados.has(actual.estado)
     const fin = actual.fin ?? null
     if (cerrado && (fin == null || ahora - fin >= DIA_MS)) continue
@@ -423,10 +512,12 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     const agente = registrado?.agente ?? texto(...grupo.map((visto) => visto.agente))
     const modelo = registrado?.modelo ?? texto(...grupo.map((visto) => visto.modelo))
     const enlace = destino(grupo)
+    const tarea = asuntoLimpio(...grupo.filter((visto) => visto.tareaId).map((visto) => visto.tarea),
+      ...grupo.map((visto) => visto.tarea))
     nodos.set(id, {
-      id, tipo: 'worker', nombre: actual.nombre ?? agente ?? textos.worker,
+      id, tipo: 'worker', nombre: tarea ?? actual.nombre ?? agente ?? textos.worker,
       estado: estado(actual.estado), maquina: actual.maquina, desde: actual.desde,
-      tarea: linea(...grupo.map((visto) => visto.tarea)),
+      tarea,
       ...(agente && { agente }), ...(modelo && { modelo }),
       ...(enlace && { destino: enlace }),
       ...(cerrado && { atenuado: true as const }),
@@ -491,21 +582,29 @@ function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, b
     if (origen) conectar({ tipo: 'agrupa', origen, destino: id })
   }
 
+  const ultimosAsuntos = new Map<string, number>()
   for (const mensaje of captura.mensajes?.filas ?? []) {
     const host = enMaquina(texto(mensaje.hostId), base)
     const origen = participantes.get(clave(host, texto(mensaje.from_handle) ?? ''))
     const destino = participantes.get(clave(host, texto(mensaje.to_handle) ?? ''))
     const hora = fecha(mensaje.created_at)
-    if (!origen || !destino || hora === null) continue
-    const asunto = linea(mensaje.subject)
-    conectar({ tipo: 'mensaje', origen, destino, hora, ...(asunto && { asunto }) }, texto(mensaje.id) ?? String(hora))
+    const asunto = asuntoLimpio(mensaje.subject)
+    if (hora === null || !destino) continue
+    const receptor = nodos.get(destino)
+    if (receptor?.tipo === 'bot' && asunto && hora > (ultimosAsuntos.get(destino) ?? 0)) {
+      receptor.tarea = asunto
+      ultimosAsuntos.set(destino, hora)
+    }
+    if (!origen) continue
+    conectar({ tipo: 'mensaje', origen, destino, hora, mensaje: tipoMensaje(mensaje.type),
+      ...(asunto && { asunto }) }, texto(mensaje.id) ?? String(hora))
     if (mensaje.type === 'dispatch' && nodos.get(destino)?.tipo === 'worker') {
       conectar({ tipo: 'lanzamiento', origen, destino, hora })
     }
   }
 
   const fuentes = [
-    captura.bots, ...Object.values(captura.trabajos ?? {}), captura.pendientes, captura.worktrees,
+    captura.bots, captura.iniciosBots, ...Object.values(captura.trabajos ?? {}), captura.pendientes, captura.worktrees,
     captura.workers, captura.terminales, captura.mensajes, captura.automatizaciones,
   ].filter((fuente) => fuente !== undefined)
   const fallos = fuentes.flatMap((fuente) => fuente.fallo ?? [])

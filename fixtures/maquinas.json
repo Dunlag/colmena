@@ -65,7 +65,7 @@
     },
     "bot list": {
       "ok": true,
-      "result": {"bots": [{"id": "bot-2", "name": "Huerto", "agent": "claude", "paused": false, "linked": []}]}
+      "result": {"bots": [{"id": "bot-2-deck", "name": "Huerto", "agent": "claude", "paused": false, "linked": []}]}
     }
   },
   "chopper": {
@@ -105,7 +105,7 @@
     },
     "bot list": {
       "ok": true,
-      "result": {"bots": [{"id": "bot-2", "name": "Huerto", "agent": "claude", "paused": false, "linked": []}]}
+      "result": {"bots": [{"id": "bot-2-chopper", "name": "Huerto", "agent": "claude", "paused": false, "linked": []}]}
     }
   }
 }

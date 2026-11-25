@@ -1,5 +1,6 @@
-import { lstat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { lstat, mkdir, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { LOCAL, objeto } from './datos'
 import { enfocarTerminalRemoto } from './fuentes'
@@ -8,21 +9,31 @@ import { textos } from './textos'
 
 const ARCHIVO = 'Colmena.colmena'
 
-export async function abrirColmena(host: OrcaWorkerApi['host']): Promise<{ error?: string }> {
+const ENLACE_PROPIO = new URL('../.orca/Colmena.colmena', import.meta.url)
+
+export async function abrirColmena(
+  host: OrcaWorkerApi['host'], archivoPropio = fileURLToPath(ENLACE_PROPIO),
+): Promise<{ error?: string }> {
   try {
-    const contexto = await host.call('workspace.readContext')
     const { workspaces } = await host.call('workspace.list')
-    const espacio = workspaces.find(({ id, hostId, path }) =>
-      id === contexto?.workspaceId && (!hostId || hostId === LOCAL) && isAbsolute(path))
+    const locales = workspaces.filter(({ hostId, path }) => (!hostId || hostId === LOCAL) && isAbsolute(path))
+    const contenedor = locales.filter(({ path }) => {
+      const ruta = relative(path, archivoPropio)
+      return ruta && !isAbsolute(ruta) && ruta !== '..' && !ruta.startsWith(`..${sep}`)
+    }).sort((a, b) => b.path.length - a.path.length || a.id.localeCompare(b.id))[0]
+    const bob = locales.find(({ path, kind }) => kind === 'folder' &&
+      basename(path).toLowerCase() === 'bob' && basename(dirname(path)) === 'bots')
+    const espacio = contenedor ?? bob
     if (!espacio) return { error: textos.faltaEspacioLocal }
 
-    const archivo = join(espacio.path, ARCHIVO)
+    const archivo = contenedor ? archivoPropio : join(espacio.path, '.colmena', ARCHIVO)
+    await mkdir(dirname(archivo), { recursive: true, mode: 0o700 })
     try {
       await writeFile(archivo, `${textos.enlaceColmena}\n`, { flag: 'wx', mode: 0o600 })
     } catch (error) {
       if (objeto(error).code !== 'EEXIST' || !(await lstat(archivo)).isFile()) throw error
     }
-    await host.call('editor.open', { workspaceId: espacio.id, path: ARCHIVO })
+    await host.call('editor.open', { workspaceId: espacio.id, path: relative(espacio.path, archivo).split(sep).join('/') })
     await host.call('workspace.open', { workspaceId: espacio.id })
     return {}
   } catch {

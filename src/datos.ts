@@ -19,6 +19,7 @@ export type CapturaHost = {
   trabajos?: Record<string, Fuente>
   pendientes?: Fuente
   worktrees?: Fuente
+  iniciosBots?: Fuente
   workers?: Fuente
   terminales?: Fuente
   mensajes?: Fuente
@@ -28,6 +29,7 @@ export type CapturaHost = {
 export type Entorno = { id: string; nombre: string }
 export type Captura = CapturaHost & {
   entornos?: Fuente
+  actividad?: Record<string, Fila>
   remotasVivas?: Record<string, CapturaHost>
   remotasOtras?: Record<string, CapturaHost>
 }

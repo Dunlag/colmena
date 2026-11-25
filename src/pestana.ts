@@ -9,7 +9,7 @@ const NIVELES = { ahorro: textos.ahorro, completo: textos.completo } as const
 type Nivel = keyof typeof NIVELES
 
 const tipos: Record<Nodo['tipo'], string> = {
-  tu: textos.usuario, bot: textos.bot, worker: textos.worker,
+  tu: textos.usuario, bob: textos.bob, bot: textos.bot, worker: textos.worker,
   automatizacion: textos.automatizacion, maquina: textos.maquina,
 }
 const tonos = new Map<string, string>([

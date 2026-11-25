@@ -19,14 +19,17 @@ test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', a
     assert.equal(args.at(-1), '--json')
     if (orden === 'bot list') return JSON.stringify({ ok: true, result: { bots: [{ name: 'Bob' }] } })
     if (orden.startsWith('bot work list')) return JSON.stringify({ ok: false, error: { code: 'ejemplo' } })
+    if (orden === 'agent list') return JSON.stringify({ ok: true, result: { agents: [] } })
+    if (orden.startsWith('orchestration worker-list')) return JSON.stringify({ ok: true, result: { workers: [] } })
     if (orden.startsWith('bot item list')) return JSON.stringify({ ok: true, result: { items: [] } })
     if (orden.startsWith('orchestration inbox')) return JSON.stringify({ ok: true, result: { messages: [] } })
     return JSON.stringify({ ok: true, result: { automations: [{ id: 'riego' }] } })
   })
   const datos = await fuente.otras()
   assert.deepEqual(llamadas, [
-    'bot list', 'bot work list --bot Bob', 'bot item list --bot Bob --status needs_you',
-    'orchestration inbox --full', 'automations list',
+    'bot list', 'bot work list --bot Bob', 'agent list',
+    'bot item list --bot Bob --status needs_you', 'orchestration inbox --limit 100 --full',
+    'automations list', 'orchestration worker-list --full',
   ])
   assert.equal(datos.trabajos?.Bob.fallo?.codigo, 'ejemplo')
   assert.equal(datos.automatizaciones?.filas[0].id, 'riego')
@@ -69,6 +72,32 @@ test('El worker devuelve el grafo al panel y observa arranques sin modificar el 
       assert.deepEqual(registro, { agente: 'codex', modelo: esperado, maquina: LOCAL, desde: registro.desde })
     }
     assert.deepEqual(worker.refusals, [])
+  } finally {
+    await detener?.()
+  }
+})
+
+test('Sin vista visible no sondea la CLI: solo una consulta al abrir y ninguna más', async () => {
+  let detener: (() => Promise<void>) | undefined
+  let otras = 0
+  const host = mockHost({
+    capabilities: ['agent:read', 'storage:own', 'workspace:read'],
+    results: { 'workspace.list': { workspaces: [], truncated: false } },
+  })
+  const worker = await mountWorker({
+    default: (orca) => {
+      detener = activar(orca, () => ({ otras: async () => { otras++; return {} } }) as never)
+    },
+    deactivate: () => detener?.(),
+  }, { events: eventos, hooks: [hookModelo], host })
+  try {
+    await worker.request('grafo.obtener')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await worker.request('grafo.obtener')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(otras, 1)
+    await worker.request('vista.visible', { visible: false })
+    assert.equal(otras, 1)
   } finally {
     await detener?.()
   }

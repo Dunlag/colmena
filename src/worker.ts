@@ -1,56 +1,43 @@
 import type { OrcaWorkerApi } from 'orca/worker'
-import { clave, LOCAL, maquinaRemota, type Captura } from './datos'
-import { lector } from './fuentes'
+import { clave, LOCAL, type Captura, type Fila } from './datos'
+import { lector, vivas } from './fuentes'
 import { CLAVE_MODELOS, depurarModelos, leerModelo, type Modelos } from './modelo'
 import { abrirColmena, abrirNodo } from './navegar'
 import { normalizar } from './normalizar'
+import { VIGENCIA_VISTA_MS } from './protocol'
 import { textos } from './textos'
 
 export const eventos = [
   'agent.status.changed', 'workspace.created', 'workspace.removed', 'workspace.changed',
 ] as const
 
-const VIVAS_MS = 4_000
-const OTRAS_MS = 20_000
-const REGISTRO_TERMINAL_MS = 10_000
+const DEBOUNCE_MS = 750
+const OTRAS_MS = 120_000
+const OBSOLETO_MS = 300_000
 export const hookModelo = 'agent.launch.before'
 
-export function activar(orca: OrcaWorkerApi, crearLector = lector): () => Promise<void> {
+export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = vivas): () => Promise<void> {
   const vida = new AbortController()
   const fuentes = crearLector(vida.signal)
-  let captura: Captura = {}
+  const vistas = new Map<string, number>()
+  const actividad: Record<string, Fila> = Object.create(null)
+  let captura: Captura = { actividad }
   let modelos: Modelos = {}
   let almacenamiento = Promise.resolve()
   let grafo = normalizar(captura, Date.now())
-  let siguienteViva = 0
   let siguienteOtra = 0
   let temporizador: ReturnType<typeof setTimeout> | undefined
-  let ocupado = false
+  let temporizadorVivas: ReturnType<typeof setTimeout> | undefined
+  let consulta: AbortController | undefined
+  let ultimaOtra = 0
+  let leyendoVivas = false
+  let vivasPendientes = true
 
   function publicar(parcial: Captura) {
     if (vida.signal.aborted) return
     captura = { ...captura, ...parcial }
     grafo = normalizar(captura, Date.now(), modelos)
     orca.panels.post('grafo.actualizado', grafo)
-  }
-
-  async function consultarVivas() {
-    const consultado = Date.now()
-    if (vida.signal.aborted || consultado < siguienteViva) return
-    siguienteViva = consultado + VIVAS_MS
-    try {
-      const parcial = await fuentes.vivas()
-      if (vida.signal.aborted) return
-      const inventarios = Object.entries(parcial.remotasVivas ?? {}).flatMap(([id, host]) =>
-        host.terminales ? [{ base: maquinaRemota(id), fuente: host.terminales }] : [])
-      if (parcial.terminales) inventarios.push({ base: LOCAL, fuente: parcial.terminales })
-      await actualizarModelos((guardado) => depurarModelos(
-        guardado, Date.now(), inventarios, consultado - REGISTRO_TERMINAL_MS,
-      ))
-      publicar(parcial)
-    } finally {
-      if (siguienteViva !== 0) siguienteViva = Date.now() + VIVAS_MS
-    }
   }
 
   function actualizarModelos(cambiar: (guardado: unknown) => Modelos) {
@@ -65,44 +52,108 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector): () => Promis
     return almacenamiento
   }
 
+  function visibles(ahora: number) {
+    for (const [id, vence] of vistas) {
+      if (vence <= ahora) vistas.delete(id)
+    }
+    return vistas.size > 0
+  }
+
   function programar() {
     clearTimeout(temporizador)
-    if (vida.signal.aborted || ocupado) return
-    const demora = Math.max(0, Math.min(siguienteViva, siguienteOtra) - Date.now())
-    temporizador = setTimeout(() => void refrescar(), demora)
+    const ahora = Date.now()
+    if (vida.signal.aborted || !visibles(ahora)) {
+      consulta?.abort()
+      return
+    }
+    const vence = Math.min(...vistas.values())
+    if (!consulta && ahora >= siguienteOtra) {
+      void refrescar()
+    } else {
+      const siguiente = consulta ? vence : Math.min(vence, siguienteOtra)
+      temporizador = setTimeout(programar, Math.max(0, siguiente - ahora))
+    }
   }
 
   async function refrescar() {
-    ocupado = true
+    const actual = new AbortController()
+    consulta = actual
+    siguienteOtra = Date.now() + OTRAS_MS
+    programar()
     try {
-      await consultarVivas()
-      if (!vida.signal.aborted && Date.now() >= siguienteOtra) {
-        // Deja paso a una vuelta rápida entre consultas lentas, manteniendo un solo proceso CLI.
-        try {
-          publicar(await fuentes.otras(consultarVivas))
-        } finally {
-          siguienteOtra = Date.now() + OTRAS_MS
-        }
+      const parcial = await fuentes.otras(actual.signal)
+      if (!actual.signal.aborted) {
+        ultimaOtra = Date.now()
+        publicar(parcial)
       }
     } catch {
-      orca.log(textos.falloConsulta)
+      if (!actual.signal.aborted) orca.log(textos.falloConsulta)
     } finally {
-      ocupado = false
+      // Una consulta cancelada no reemplaza el inventario anterior.
+      if (actual.signal.aborted) siguienteOtra = 0
+      consulta = undefined
       programar()
     }
   }
 
-  function adelantar() {
-    siguienteViva = 0
-    programar()
+  async function refrescarVivas() {
+    if (leyendoVivas || vida.signal.aborted) return
+    leyendoVivas = true
+    vivasPendientes = false
+    try {
+      const parcial = await leerVivas(orca.host, vida.signal)
+      await actualizarModelos((guardado) => depurarModelos(guardado, Date.now()))
+      publicar(parcial)
+    } catch {
+      if (!vida.signal.aborted) orca.log(textos.falloConsulta)
+    } finally {
+      leyendoVivas = false
+      if (vivasPendientes) adelantar()
+    }
   }
 
-  orca.panels.handle('grafo.obtener', () => {
-    if (!ocupado && !temporizador) programar()
+  function adelantar() {
+    vivasPendientes = true
+    if (temporizadorVivas || leyendoVivas || vida.signal.aborted) return
+    temporizadorVivas = setTimeout(() => {
+      temporizadorVivas = undefined
+      void refrescarVivas()
+    }, DEBOUNCE_MS)
+  }
+
+  orca.panels.handle('grafo.obtener', (_entrada, { panel }) => {
+    if (vivasPendientes) adelantar()
+    // Una vista que aún no avisa con vista.visible recibe los datos de la CLI al abrirse, y luego cada 5 min como mucho.
+    if (Date.now() - ultimaOtra > OBSOLETO_MS && !consulta) {
+      vistas.set(`obtener:${panel.id}`, Date.now() + VIGENCIA_VISTA_MS)
+      programar()
+    }
     return grafo
   })
 
-  const suscripciones = eventos.map((evento) => orca.events.on(evento, adelantar))
+  const suscripciones = [
+    orca.events.on('agent.status.changed', (evento) => {
+      if (evento.sessionId) {
+        const id = evento.sessionId.startsWith('orca_session_id:') ? evento.sessionId : `orca_session_id:${evento.sessionId}`
+        actividad[id] = {
+          state: evento.mainAgent?.state ?? evento.state,
+          stateStartedAt: evento.mainAgent?.stateStartedAt ?? evento.receivedAt,
+        }
+      }
+      adelantar()
+    }),
+    ...eventos.filter((evento) => evento !== 'agent.status.changed').map((evento) => orca.events.on(evento, adelantar)),
+  ]
+  suscripciones.push(orca.panels.handle('vista.visible', ({ visible }, { panel }) => {
+    if (visible === true) {
+      vistas.set(panel.id, Date.now() + VIGENCIA_VISTA_MS)
+      if (!captura.worktrees) adelantar()
+    } else {
+      vistas.delete(panel.id)
+    }
+    programar()
+    return {}
+  }))
   suscripciones.push(
     orca.commands.register('colmena.abrir', async () => (await abrirColmena(orca.host)).error),
     orca.panels.handle('colmena.abrir', () => abrirColmena(orca.host)),
@@ -126,6 +177,8 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector): () => Promis
   return async () => {
     vida.abort()
     clearTimeout(temporizador)
+    clearTimeout(temporizadorVivas)
+    consulta?.abort()
     for (const suscripcion of suscripciones) suscripcion.dispose()
     await almacenamiento
   }

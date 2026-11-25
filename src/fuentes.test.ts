@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'orca/testing'
-import { clave, LOCAL, maquinaRemota } from './datos'
+import { clave, LOCAL, maquinaRemota, type Captura } from './datos'
 import { lector } from './fuentes'
 import { normalizar } from './normalizar'
 import { textos } from './textos'
@@ -16,7 +16,7 @@ function lectorDeEjemplo(caido?: string) {
   const maquinas = fixture('maquinas')
   const llamadas: string[][] = []
   const locales: Record<string, string> = {
-    'worktree ps': 'worktrees', 'orchestration worker-list': 'workers',
+    'orchestration worker-list': 'workers',
     'bot list': 'bots', 'bot work': 'trabajos', 'bot item': 'pendientes',
     'orchestration inbox': 'mensajes', 'automations list': 'automatizaciones',
   }
@@ -37,8 +37,11 @@ function lectorDeEjemplo(caido?: string) {
     assert.ok(indice >= 0)
     const servidor = argumentos[indice + 1]
     if (servidor === caido) throw Object.assign(new Error('timeout'), { killed: true })
+    const vacias: Record<string, unknown> = {
+      'agent list': { agents: [] }, 'orchestration task-list': { tasks: [] }, 'orchestration dispatch-show': { dispatch: {} },
+    }
     const respuesta = maquinas[servidor]?.[orden] ?? (
-      orden === 'terminal list' ? { ok: true, result: { terminals: [] } } : fixture(locales[orden])
+      orden in vacias ? { ok: true, result: vacias[orden] } : fixture(locales[orden])
     )
     if (orden === 'bot list' && servidor === LOCAL) {
       respuesta.result.bots.push({
@@ -51,11 +54,25 @@ function lectorDeEjemplo(caido?: string) {
   return { fuentes, llamadas }
 }
 
+// Lo vivo llega por la API del host, no por la CLI; aquí lo aportan los fixtures.
+async function conVivas(otras: Captura): Promise<Captura> {
+  const maquinas = fixture('maquinas')
+  return {
+    ...otras,
+    worktrees: { filas: fixture('worktrees').result.worktrees },
+    remotasVivas: Object.fromEntries(['deck', 'chopper'].map((id) => [id, {
+      worktrees: { filas: maquinas[id]['worktree ps'].result.worktrees },
+    }])),
+  }
+}
+
 test('Consulta tres máquinas en serie y agrupa bots y workers con ids repetidos', async () => {
   const { fuentes, llamadas } = lectorDeEjemplo()
-  const captura = { ...await fuentes.vivas(), ...await fuentes.otras() }
-  const hosts = llamadas.slice(1, 10).map((args) => args[args.indexOf('--environment') + 1])
-  assert.deepEqual(hosts, [LOCAL, LOCAL, LOCAL, 'deck', 'deck', 'deck', 'chopper', 'chopper', 'chopper'])
+  const captura = await conVivas(await fuentes.otras())
+  // Cada máquina se consulta entera antes de pasar a la siguiente, siempre de una en una.
+  const hosts = llamadas.slice(1).map((args) => args[args.indexOf('--environment') + 1])
+  assert.deepEqual([...new Set(hosts)], [LOCAL, 'deck', 'chopper'])
+  assert.deepEqual(hosts, [...hosts].sort((a, b) => [LOCAL, 'deck', 'chopper'].indexOf(a) - [LOCAL, 'deck', 'chopper'].indexOf(b)))
   const deck = maquinaRemota('deck')
   const chopper = maquinaRemota('chopper')
   captura.automatizaciones?.filas.push({ id: 'solo-local', name: 'Revisar Deck', executionTargetId: deck })
@@ -84,7 +101,8 @@ test('Consulta tres máquinas en serie y agrupa bots y workers con ids repetidos
 
 test('Registra los fallos de una máquina caída y sigue consultando las demás', async () => {
   const { fuentes } = lectorDeEjemplo('deck')
-  const datos = { ...await fuentes.vivas(), ...await fuentes.otras() }
+  const datos = await conVivas(await fuentes.otras())
+  delete datos.remotasVivas?.deck
   const grafo = normalizar(datos, AHORA)
   assert.ok(grafo.fallos.length > 0)
   assert.ok(grafo.fallos.every((fallo) => fallo.codigo === 'timeout' && fallo.maquina === 'runtime:deck'))

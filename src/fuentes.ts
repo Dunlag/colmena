@@ -2,8 +2,10 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { OrcaWorkerApi } from 'orca/worker'
+import { DIA_MS } from './modelo'
 import {
-  entornosGuardados, filas, LOCAL, maquinaRemota, objeto, texto,
+  entornosGuardados, fecha, filas, LOCAL, maquinaRemota, objeto, texto,
   type Captura, type CapturaHost, type Entorno, type FalloFuente, type Fuente, type Fila,
 } from './datos'
 import { textos } from './textos'
@@ -49,12 +51,40 @@ export async function enfocarTerminalRemoto(terminalId: string, entorno: string,
   return respuesta.ok === true && objeto(objeto(respuesta.result).focus).navigated === true
 }
 
-export function lector(signal: AbortSignal, comando: Ejecutar = ejecutar) {
+type Host = OrcaWorkerApi['host']
+
+export async function vivas(host: Host, signal: AbortSignal): Promise<Captura> {
+  const { workspaces, truncated } = await host.call('workspace.list', { includeStatus: true }, { signal })
+  const worktrees: Fila[] = []
+  for (const espacio of workspaces) {
+    if (signal.aborted) break
+    // Las carpetas incluyen las sesiones de inicio de los bots, incluso cuando duermen.
+    const consultar = espacio.kind === 'folder' || !espacio.status || espacio.status.terminalCount > 0
+    const agentes = consultar
+      ? await host.call('agents.list', { workspaceId: espacio.id }, { signal }).catch(() => ({ agents: [] }))
+      : { agents: [] }
+    worktrees.push({
+      worktreeId: espacio.id, path: espacio.path, displayName: espacio.name,
+      hostId: espacio.hostId, kind: espacio.kind,
+      agents: agentes.agents.map(({ terminalId, title, agent, state, stateStartedAt, sessionId, task }) => ({
+        terminalId, title, agent, state, stateStartedAt, orcaSessionId: sessionId, taskTitle: task?.title,
+      })),
+    })
+  }
+  return { worktrees: { filas: worktrees, ...(truncated && {
+    fallo: { maquina: LOCAL, fuente: 'workspace.list', codigo: 'parcial', mensaje: textos.parcial },
+  }) } }
+}
+
+export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar) {
+  let signal = vida
   let entornos: Fuente | undefined
   let servidores: Entorno[] = []
+  const detalles = new Map<string, Fila>()
+  const propietarios = new Map<string, string>()
 
   async function consultar(
-    argumentos: string[], campo: string, servidor?: Entorno, paginar = false, antes?: () => Promise<void>,
+    argumentos: string[], campo: string, servidor?: Entorno, paginar = false, objetoUnico = false,
   ): Promise<Fuente> {
     const fuente = argumentos.join(' ')
     const maquina = servidor ? maquinaRemota(servidor.id) : LOCAL
@@ -67,7 +97,6 @@ export function lector(signal: AbortSignal, comando: Ejecutar = ejecutar) {
     let fallo: FalloFuente | undefined
 
     do {
-      await antes?.()
       if (signal.aborted) break
       try {
         const pagina: Fila = objeto(JSON.parse(await comando([
@@ -80,8 +109,9 @@ export function lector(signal: AbortSignal, comando: Ejecutar = ejecutar) {
           } }
         }
         const resultado = objeto(pagina.result)
-        if (pagina.ok !== true || !Array.isArray(resultado[campo])) throw new SyntaxError()
-        acumuladas.push(...filas(resultado[campo]))
+        const valor = resultado[campo]
+        if (pagina.ok !== true || (!objetoUnico && !Array.isArray(valor))) throw new SyntaxError()
+        acumuladas.push(...(objetoUnico ? [objeto(valor)] : filas(valor)))
         if (campo === 'workspaces') items = filas(resultado.items)
         const alcance = objeto(resultado.hostScope)
         if (Array.isArray(alcance.hostIds)) hosts = alcance.hostIds.flatMap((host) => texto(host) ?? [])
@@ -110,33 +140,107 @@ export function lector(signal: AbortSignal, comando: Ejecutar = ejecutar) {
     return { filas: acumuladas, items, hosts, fallo }
   }
 
-  async function vivasHost(servidor?: Entorno): Promise<CapturaHost> {
-    const worktrees = await consultar(['worktree', 'ps', '--limit', '100'], 'worktrees', servidor)
-    const workers = await consultar(['orchestration', 'worker-list', '--full'], 'workers', servidor, true)
-    const terminales = await consultar(['terminal', 'list', '--limit', '1000'], 'terminals', servidor)
-    // Se conserva únicamente lo necesario para enlazar y depurar los modelos.
-    terminales.filas = terminales.filas.map(({ handle, ptyId, tabId, leafId, executionHostId }) =>
-      ({ handle, ptyId, tabId, leafId, executionHostId }))
-    return { worktrees, workers, terminales }
+  async function completarWorkers(workers: Fuente, servidor?: Entorno) {
+    const porRun = new Map<string, Map<string, Fila>>()
+    const maquina = servidor?.id ?? LOCAL
+    const ahora = Date.now()
+    for (const worker of workers.filas) {
+      if (signal.aborted) break
+      const run = texto(worker.runId, objeto(worker.projection).runId)
+      const tarea = texto(worker.taskId)
+      const dispatch = texto(worker.dispatchId)
+      if (!run || !tarea || !dispatch) continue
+      const previo = detalles.get(`${maquina}:${dispatch}`)
+      if (previo) {
+        Object.assign(worker, previo)
+        continue
+      }
+      const fin = fecha(objeto(worker.resource).releaseCompletedAt)
+      if (fin !== null && ahora - fin >= DIA_MS) continue
+      if (!porRun.has(run)) {
+        const tareas = await consultar(['orchestration', 'task-list', '--run', run, '--full'], 'tasks', servidor)
+        porRun.set(run, new Map(tareas.filas.map((fila) => [String(fila.id), fila])))
+      }
+      const registro = porRun.get(run)?.get(tarea)
+      const finTarea = fecha(registro?.completed_at, fin)
+      if (finTarea !== null && ahora - finTarea >= DIA_MS) continue
+      const { filas: [contexto] } = await consultar(
+        ['orchestration', 'dispatch-show', '--task', tarea, '--full'], 'dispatch', servidor, false, true,
+      )
+      const exacto = contexto?.id === dispatch ? contexto : undefined
+      const coordinador = texto(exacto?.creator_orca_session_id, exacto?.creator_handle)
+      if (coordinador && !exacto?.creator_dispatch_id) {
+        propietarios.set(`${maquina}:${run}`, coordinador.includes(':') ? coordinador : `orca_session_id:${coordinador}`)
+      }
+      const prov = objeto(objeto(worker.projection).provider)
+      const detalle = finTarea !== null && (!prov.id || !prov.model)
+        ? (await consultar(['orchestration', 'worker-show', '--dispatch', dispatch, '--full'],
+          'worker', servidor, false, true)).filas[0]
+        : undefined
+      const inicio = objeto(detalle?.startOptions)
+      const lanzamiento = objeto(objeto(inicio.launch).effective)
+      const metadatos = {
+        taskTitle: texto(registro?.task_title, registro?.title, worker.taskTitle),
+        completedAt: finTarea,
+        createdAt: fecha(registro?.created_at),
+        creatorSession: texto(exacto?.creator_orca_session_id),
+        creatorHandle: texto(exacto?.creator_handle),
+        creatorDispatch: texto(exacto?.creator_dispatch_id),
+        assigneeSession: texto(exacto?.assignee_orca_session_id),
+        agent: texto(prov.id, inicio.agent),
+        model: texto(prov.model, lanzamiento.model, objeto(objeto(inicio.launch).requested).model),
+      }
+      if (finTarea !== null && metadatos.taskTitle && (coordinador || metadatos.creatorDispatch)) {
+        detalles.set(`${maquina}:${dispatch}`, metadatos)
+      }
+      Object.assign(worker, metadatos)
+    }
+    for (const [id, campos] of detalles) {
+      if (ahora - (fecha(campos.completedAt) ?? ahora) >= DIA_MS) detalles.delete(id)
+    }
   }
 
-  async function otrasHost(servidor?: Entorno, antes?: () => Promise<void>): Promise<CapturaHost> {
-    const bots = await consultar(['bot', 'list'], 'bots', servidor, false, antes)
+  async function otrasHost(servidor?: Entorno): Promise<CapturaHost> {
+    const bots = await consultar(['bot', 'list'], 'bots', servidor)
     bots.filas = bots.filas.filter((bot) => !bot.server)
     const trabajos: Record<string, Fuente> = Object.create(null)
     for (const bot of bots.filas) {
       const nombre = texto(bot.name)
       const id = texto(bot.id) ?? nombre
       if (nombre && id && !Object.hasOwn(trabajos, id)) {
-        trabajos[id] = await consultar(['bot', 'work', 'list', '--bot', nombre], 'workspaces', servidor, false, antes)
+        trabajos[id] = await consultar(['bot', 'work', 'list', '--bot', nombre], 'workspaces', servidor)
       }
     }
+    // Sin bots no hay inicios que buscar; sin consultar tampoco cuenta como fuente disponible.
+    const agentes = bots.filas.length ? await consultar(['agent', 'list'], 'agents', servidor) : undefined
+    const nombres = new Set(bots.filas.map(({ name }) => name))
+    const iniciosBots: Fuente | undefined = agentes && {
+      ...agentes,
+      filas: agentes.filas.flatMap((agente) => agente.kind === 'chat' && nombres.has(agente.workspace) &&
+        texto(agente.worktreeId)?.startsWith('folder:') ? [{
+          bot: agente.workspace, displayName: agente.workspace, worktreeId: agente.worktreeId,
+          hostId: agente.hostId, botHome: true, agents: [{
+            agent: agente.agent, state: agente.state, updatedAt: agente.updatedAt,
+            orcaSessionId: agente.orcaSessionId, paneKey: agente.paneKey,
+          }],
+        }] : []),
+    }
     const pendientes = await consultar(
-      ['bot', 'item', 'list', '--bot', textos.bob, '--status', 'needs_you'], 'items', servidor, true, antes,
+      ['bot', 'item', 'list', '--bot', textos.bob, '--status', 'needs_you'], 'items', servidor, true,
     )
-    const mensajes = await consultar(['orchestration', 'inbox', '--full'], 'messages', servidor, false, antes)
-    const automatizaciones = await consultar(['automations', 'list'], 'automations', servidor, false, antes)
-    return { bots, trabajos, pendientes, mensajes, automatizaciones }
+    const mensajes = await consultar(['orchestration', 'inbox', '--limit', '100', '--full'], 'messages', servidor)
+    const automatizaciones = await consultar(['automations', 'list'], 'automations', servidor)
+    const workers = await consultar(['orchestration', 'worker-list', '--full'], 'workers', servidor, true)
+    await completarWorkers(workers, servidor)
+    for (const mensaje of mensajes.filas) {
+      for (const campo of ['from_handle', 'to_handle']) {
+        const handle = texto(mensaje[campo])
+        if (handle?.startsWith('run:')) {
+          mensaje[campo] = propietarios.get(`${servidor?.id ?? LOCAL}:${handle.slice(4)}`) ?? handle
+        }
+      }
+    }
+    return { bots, trabajos, iniciosBots, pendientes, mensajes, automatizaciones, workers }
   }
 
   async function porServidor(consultarHost: (servidor: Entorno) => Promise<CapturaHost>) {
@@ -149,19 +253,14 @@ export function lector(signal: AbortSignal, comando: Ejecutar = ejecutar) {
   }
 
   return {
-    async vivas(): Promise<Captura> {
+    async otras(visible: AbortSignal = vida): Promise<Captura> {
+      signal = AbortSignal.any([vida, visible])
       const listado = await consultar(['environment', 'list'], 'environments')
       entornos = listado.fallo ? { ...listado, filas: entornos?.filas ?? [] } : listado
       servidores = entornosGuardados(entornos)
-      // El grafo solo necesita el selector estable y la etiqueta del servidor.
       entornos.filas = servidores.map(({ id, nombre }) => ({ id, name: nombre }))
-      const local = await vivasHost()
-      return { ...local, entornos, remotasVivas: await porServidor(vivasHost) }
-    },
-
-    async otras(antes?: () => Promise<void>): Promise<Captura> {
-      const local = await otrasHost(undefined, antes)
-      return { ...local, remotasOtras: await porServidor((servidor) => otrasHost(servidor, antes)) }
+      const local = await otrasHost()
+      return { ...local, entornos, remotasOtras: await porServidor(otrasHost) }
     },
   }
 }

@@ -26,7 +26,7 @@ export function disponer(grafo: Pick<Grafo, 'nodos' | 'aristas'>) {
   const maquinas = new Map(grafo.nodos.filter(({ tipo }) => tipo === 'maquina').map((nodo) => [nodo.maquina, nodo]))
   const raiz = [...nodos.values()].find(({ tipo }) => tipo === 'tu')
   const bobs = new Map([...nodos.values()]
-    .filter(({ tipo, nombre }) => tipo === 'bot' && nombre === textos.bob)
+    .filter(({ tipo }) => tipo === 'bob')
     .map((nodo) => [nodo.maquina, nodo.id]))
   const candidatos = new Map<string, string[]>()
   for (const arista of grafo.aristas) {

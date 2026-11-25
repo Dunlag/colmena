@@ -5,31 +5,52 @@ import { hostError, mockHost, mountWorker, test } from 'orca/testing'
 import { abrirColmena, abrirNodo } from './navegar'
 import { textos } from './textos'
 
-test('Crea un enlace en el espacio local activo y lo reutiliza sin sobrescribirlo', async () => {
-  const path = await mkdtemp(join(process.cwd(), '.colmena-prueba-'))
+async function probarEnlace(
+  espacios: (raiz: string) => { id: string; path: string; kind: 'folder' | 'worktree' }[],
+  propio: (raiz: string) => string, esperado: { espacio: string; ruta: string; abierto: string },
+) {
+  const raiz = await mkdtemp(join(process.cwd(), '.colmena-prueba-'))
   const host = mockHost({ results: {
-    'workspace.readContext': { workspaceId: 'taller', branch: '', displayName: 'Taller', terminals: [] },
-    'workspace.list': { workspaces: [{ id: 'taller', hostId: null, path, name: 'Taller', kind: 'folder', branch: null }], truncated: false },
+    // El espacio activo nunca decide dónde se escribe el enlace.
+    'workspace.readContext': { workspaceId: 'activo', branch: '', displayName: 'Activo', terminals: [] },
+    'workspace.list': {
+      workspaces: espacios(raiz).map((e) => ({ ...e, hostId: null, name: e.id, branch: null })), truncated: false,
+    },
     'editor.open': { opened: true },
     'workspace.open': { opened: true },
   } })
   const worker = await mountWorker({
-    default: (orca) => { orca.commands.register('colmena.abrir', () => abrirColmena(orca.host)) },
+    default: (orca) => { orca.commands.register('colmena.abrir', () => abrirColmena(orca.host, propio(raiz))) },
   }, { host, commands: ['colmena.abrir'] })
   try {
-    const enlace = join(path, 'Colmena.colmena')
+    const { espacio, ruta, abierto } = esperado
+    const enlace = join(raiz, ruta)
     assert.deepEqual(await worker.command('colmena.abrir'), {})
     assert.equal(await readFile(enlace, 'utf8'), `${textos.enlaceColmena}\n`)
     await writeFile(enlace, 'Contenido existente')
     assert.deepEqual(await worker.command('colmena.abrir'), {})
     assert.equal(await readFile(enlace, 'utf8'), 'Contenido existente')
-    assert.deepEqual(host.callsOf('editor.open'), Array(2).fill({ workspaceId: 'taller', path: 'Colmena.colmena' }))
-    assert.deepEqual(host.callsOf('workspace.open'), Array(2).fill({ workspaceId: 'taller' }))
+    assert.deepEqual(host.callsOf('editor.open'), Array(2).fill({ workspaceId: espacio, path: abierto }))
+    assert.deepEqual(host.callsOf('workspace.open'), Array(2).fill({ workspaceId: espacio }))
   } finally {
     await worker.deactivate()
-    await rm(path, { recursive: true, force: true })
+    await rm(raiz, { recursive: true, force: true })
   }
-})
+}
+
+test('Abre siempre el mismo enlace dentro de la carpeta del plugin y no sobrescribe', () =>
+  probarEnlace(
+    (raiz) => [{ id: 'activo', path: join(raiz, 'otro'), kind: 'folder' }, { id: 'plugin', path: join(raiz, 'colmena'), kind: 'folder' }],
+    (raiz) => join(raiz, 'colmena', '.orca', 'Colmena.colmena'),
+    { espacio: 'plugin', ruta: 'colmena/.orca/Colmena.colmena', abierto: '.orca/Colmena.colmena' },
+  ))
+
+test('Sin la carpeta del plugin abierta usa la carpeta de Bob, nunca la del espacio activo', () =>
+  probarEnlace(
+    (raiz) => [{ id: 'activo', path: join(raiz, 'otro'), kind: 'folder' }, { id: 'bob', path: join(raiz, 'bots', 'bob'), kind: 'folder' }],
+    () => '/instalado/fuera/Colmena.colmena',
+    { espacio: 'bob', ruta: 'bots/bob/.colmena/Colmena.colmena', abierto: '.colmena/Colmena.colmena' },
+  ))
 
 test('Enfoca el terminal local y abre su espacio si el terminal cerró', async () => {
   const host = mockHost({ results: {
