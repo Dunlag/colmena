@@ -1,21 +1,54 @@
 export type Fila = Record<string, unknown>
+export const LOCAL = 'local'
+
+export function clave(maquina: string, id: string): string {
+  return JSON.stringify([maquina, id])
+}
 
 export type FalloFuente = {
+  maquina: string
   fuente: string
   codigo: string
   mensaje: string
 }
 
-export type Fuente = { filas: Fila[]; items?: Fila[]; fallo?: FalloFuente }
+export type Fuente = { filas: Fila[]; items?: Fila[]; hosts?: string[]; fallo?: FalloFuente }
 
-export type Captura = {
+export type CapturaHost = {
   bots?: Fuente
   trabajos?: Record<string, Fuente>
   pendientes?: Fuente
   worktrees?: Fuente
   workers?: Fuente
+  terminales?: Fuente
   mensajes?: Fuente
   automatizaciones?: Fuente
+}
+
+export type Entorno = { id: string; nombre: string }
+export type Captura = CapturaHost & {
+  entornos?: Fuente
+  remotasVivas?: Record<string, CapturaHost>
+  remotasOtras?: Record<string, CapturaHost>
+}
+
+export function entornosGuardados(fuente?: Fuente): Entorno[] {
+  const entornos = new Map<string, Entorno>()
+  for (const fila of fuente?.filas ?? []) {
+    const id = texto(fila.id)
+    const nombre = texto(fila.name)
+    if (id && id !== LOCAL && nombre) entornos.set(id, { id, nombre })
+  }
+  return [...entornos.values()]
+}
+
+export function maquinaRemota(id: string): string {
+  return `runtime:${encodeURIComponent(id)}`
+}
+
+export function enMaquina(host: string | null, base: string): string {
+  if (!host || host === LOCAL || host === base) return base
+  return base === LOCAL ? host : `${base}/${host}`
 }
 
 export function objeto(valor: unknown): Fila {

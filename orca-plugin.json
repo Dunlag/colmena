@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "description": "Cola de Bob, bots, workers y automatizaciones de Orca por máquina.",
   "engines": {
-    "orca": ">=1.4.246"
+    "orca": ">=1.4.248"
   },
   "execution": "trusted-worker",
   "pluginApi": 1,
@@ -33,6 +33,12 @@
       {
         "on": "workspace.changed"
       }
+    ],
+    "hooks": [
+      {
+        "event": "agent.launch.before",
+        "onError": "pass"
+      }
     ]
   },
   "capabilities": [
@@ -41,6 +47,9 @@
     },
     {
       "kind": "workspace:read"
+    },
+    {
+      "kind": "storage:own"
     }
   ]
 }

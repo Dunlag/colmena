@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
-import { mountWorker, test } from 'orca/testing'
+import { mockHost, mountWorker, test } from 'orca/testing'
+import { clave, LOCAL } from './datos'
 import { lector } from './fuentes'
-import { activar, eventos } from './worker'
+import { CLAVE_MODELOS, type Modelos } from './modelo'
+import { activar, eventos, hookModelo } from './worker'
 
 test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', async () => {
   let enCurso = false
@@ -11,7 +13,8 @@ test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', a
     enCurso = true
     await Promise.resolve()
     enCurso = false
-    const orden = args.slice(0, -1).join(' ')
+    assert.deepEqual(args.slice(-3), ['--environment', LOCAL, '--json'])
+    const orden = args.slice(0, -3).join(' ')
     llamadas.push(orden)
     assert.equal(args.at(-1), '--json')
     if (orden === 'bot list') return JSON.stringify({ ok: true, result: { bots: [{ name: 'Bob' }] } })
@@ -29,8 +32,9 @@ test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', a
   assert.equal(datos.automatizaciones?.filas[0].id, 'riego')
 })
 
-test('El worker devuelve un grafo en el request del panel', async () => {
-  let detener: (() => void) | undefined
+test('El worker devuelve el grafo al panel y observa arranques sin modificar el lanzamiento', async () => {
+  let detener: (() => Promise<void>) | undefined
+  const host = mockHost({ capabilities: ['agent:read', 'storage:own', 'workspace:read'] })
   const worker = await mountWorker({
     default: (orca) => {
       detener = activar(orca, () => ({
@@ -39,12 +43,33 @@ test('El worker devuelve un grafo en el request del panel', async () => {
       }))
     },
     deactivate: () => detener?.(),
-  }, { events: eventos })
+  }, { events: eventos, hooks: [hookModelo], host })
   try {
     const grafo = await worker.request('grafo.obtener')
     assert.equal(grafo.nodos[0].tipo, 'tu')
     assert.ok(Number.isFinite(grafo.generado))
-  } finally {
+    const arranque = {
+      agent: 'codex', workspaceId: null, workspaceKind: null, terminalId: 'term_a',
+      command: 'API_KEY=oculta codex --model "gpt-ejemplo" --prompt "mensaje privado"',
+      env: { TOKEN: 'otro secreto' },
+    }
+    const otro = { ...arranque, terminalId: 'term_b', command: 'codex' }
+    const sinTerminal = { ...otro, terminalId: undefined }
+    for (const lanzamiento of [arranque, otro, sinTerminal]) {
+      assert.deepEqual(await worker.hooks.fire(hookModelo, lanzamiento), {
+        kind: 'continue', event: lanzamiento,
+      })
+    }
     await worker.deactivate()
+    const guardado = host.data().storage[CLAVE_MODELOS] as Modelos
+    assert.deepEqual(Object.keys(guardado).sort(), [clave(LOCAL, 'term_a'), clave(LOCAL, 'term_b')])
+    for (const [terminal, esperado] of [['term_a', 'gpt-ejemplo'], ['term_b', null]] as const) {
+      const registro = guardado[clave(LOCAL, terminal)]
+      assert.ok(Number.isFinite(registro.desde))
+      assert.deepEqual(registro, { agente: 'codex', modelo: esperado, maquina: LOCAL, desde: registro.desde })
+    }
+    assert.deepEqual(worker.refusals, [])
+  } finally {
+    await detener?.()
   }
 })

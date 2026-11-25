@@ -1,0 +1,111 @@
+{
+  "environment list": {
+    "id": "local",
+    "ok": true,
+    "result": {
+      "environments": [
+        {
+          "id": "deck",
+          "name": "Deck",
+          "runtimeId": "runtime-deck",
+          "createdAt": 1795508000000,
+          "updatedAt": 1795508000000,
+          "lastUsedAt": null,
+          "endpoints": [{"id": "ws-deck", "kind": "websocket", "label": "WebSocket", "endpoint": "ws://deck.example:4020"}],
+          "preferredEndpointId": "ws-deck"
+        },
+        {
+          "id": "chopper",
+          "name": "Chopper",
+          "runtimeId": "runtime-chopper",
+          "createdAt": 1795508000000,
+          "updatedAt": 1795508000000,
+          "lastUsedAt": null,
+          "endpoints": [{"id": "ws-chopper", "kind": "websocket", "label": "WebSocket", "endpoint": "ws://chopper.example:4020"}],
+          "preferredEndpointId": "ws-chopper"
+        }
+      ]
+    },
+    "_meta": {"runtimeId": "local"}
+  },
+  "deck": {
+    "worktree ps": {
+      "ok": true,
+      "result": {
+        "worktrees": [{"hostId": "local", "worktreeId": "taller", "displayName": "Taller", "bot": "Huerto",
+          "environment": {"id": "local", "name": "local"},
+          "agents": [{"agentType": "codex", "paneKey": "tab-a:panel-a", "orcaSessionId": "sesion-a",
+            "state": "working", "taskTitle": "Revisar Deck", "stateStartedAt": 1795607995000}]}],
+        "hostScope": {"hostIds": ["local"], "omittedHostIds": []},
+        "totalCount": 1,
+        "truncated": false
+      }
+    },
+    "terminal list": {
+      "ok": true,
+      "result": {
+        "terminals": [{"handle": "term_a", "ptyId": "pty-a", "worktreeId": "taller", "tabId": "tab-a",
+          "leafId": "panel-a", "connected": true, "writable": true, "executionHostId": "local"}],
+        "hostScope": {"hostIds": ["local"], "omittedHostIds": []},
+        "totalCount": 1,
+        "truncated": false
+      }
+    },
+    "orchestration worker-list": {
+      "ok": true,
+      "result": {
+        "workers": [{"workerState": "ready", "dispatchStatus": "dispatched", "terminalState": "active",
+          "dispatchId": "despacho-a", "agentTerminalHandle": "term_a",
+          "projection": {"host": {"kind": "local", "id": "local"}, "provider": {"id": "codex"},
+            "stage": {"worker": "ready", "dispatch": "dispatched", "activity": "working"},
+            "workspace": {"id": "taller", "kind": "folder_or_worktree"},
+            "evidence": {"lastObservedAt": 1795607998000}}}],
+        "page": {"hasMore": false, "nextCursor": null}
+      }
+    },
+    "bot list": {
+      "ok": true,
+      "result": {"bots": [{"id": "bot-2", "name": "Huerto", "agent": "claude", "paused": false, "linked": []}]}
+    }
+  },
+  "chopper": {
+    "worktree ps": {
+      "ok": true,
+      "result": {
+        "worktrees": [{"hostId": "local", "worktreeId": "taller", "displayName": "Taller", "bot": "Huerto",
+          "environment": {"id": "local", "name": "local"},
+          "agents": [{"agentType": "codex", "paneKey": "tab-a:panel-a", "orcaSessionId": "sesion-a",
+            "state": "working", "taskTitle": "Revisar Chopper", "stateStartedAt": 1795607995000}]}],
+        "hostScope": {"hostIds": ["local"], "omittedHostIds": []},
+        "totalCount": 1,
+        "truncated": false
+      }
+    },
+    "terminal list": {
+      "ok": true,
+      "result": {
+        "terminals": [{"handle": "term_a", "ptyId": "pty-a", "worktreeId": "taller", "tabId": "tab-a",
+          "leafId": "panel-a", "connected": true, "writable": true, "executionHostId": "local"}],
+        "hostScope": {"hostIds": ["local"], "omittedHostIds": []},
+        "totalCount": 1,
+        "truncated": false
+      }
+    },
+    "orchestration worker-list": {
+      "ok": true,
+      "result": {
+        "workers": [{"workerState": "ready", "dispatchStatus": "dispatched", "terminalState": "active",
+          "dispatchId": "despacho-a", "agentTerminalHandle": "term_a",
+          "projection": {"host": {"kind": "local", "id": "local"}, "provider": {"id": "codex"},
+            "stage": {"worker": "ready", "dispatch": "dispatched", "activity": "working"},
+            "workspace": {"id": "taller", "kind": "folder_or_worktree"},
+            "evidence": {"lastObservedAt": 1795607998000}}}],
+        "page": {"hasMore": false, "nextCursor": null}
+      }
+    },
+    "bot list": {
+      "ok": true,
+      "result": {"bots": [{"id": "bot-2", "name": "Huerto", "agent": "claude", "paused": false, "linked": []}]}
+    }
+  }
+}

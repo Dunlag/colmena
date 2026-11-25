@@ -1,8 +1,10 @@
-import { fecha, filas, objeto, texto, type Captura, type FalloFuente, type Fila } from './datos'
+import {
+  clave, enMaquina, entornosGuardados, fecha, filas, LOCAL, maquinaRemota, objeto, texto,
+  type Captura, type CapturaHost, type FalloFuente, type Fila,
+} from './datos'
+import { depurarModelos, DIA_MS, inventarioTerminales, type Modelos, type RegistroModelo } from './modelo'
 import { textos } from './textos'
 
-const DIA_MS = 24 * 60 * 60 * 1000
-const LOCAL = 'local'
 const TU = 'tu'
 
 type Pendiente = { id: string; tarea: string; desde: number | null }
@@ -70,11 +72,11 @@ function claves(...valores: unknown[]): string[] {
 
 function servidorId(servidor: Fila): string | null {
   const selector = texto(servidor.environmentId, servidor.on)
-  return selector && `runtime:${encodeURIComponent(selector)}`
+  return selector && maquinaRemota(selector)
 }
 
-function espacioId(espacio: Fila): string {
-  return texto(espacio.hostId, objeto(espacio.environment).id) ?? LOCAL
+function espacioId(espacio: Fila, base: string): string {
+  return enMaquina(texto(espacio.hostId, objeto(espacio.environment).id), base)
 }
 
 type Observacion = {
@@ -93,13 +95,13 @@ type Observacion = {
   tareaId?: string | null
 }
 
-function desdeAgente(agente: Fila, espacio: Fila): Observacion {
+function desdeAgente(agente: Fila, espacio: Fila, maquina: string): Observacion {
   const principal = objeto(agente.mainAgent)
   const status = texto(principal.state, agente.state)
   const desde = fecha(principal.stateStartedAt, agente.stateStartedAt, agente.updatedAt)
   return {
     ids: claves(sesion(agente.orcaSessionId), agente.address, agente.terminalHandle, agente.paneKey, agente.id),
-    maquina: espacioId(espacio),
+    maquina,
     workspace: texto(espacio.worktreeId),
     padre: texto(agente.parentPaneKey, espacio.parentWorktreeId),
     bot: texto(espacio.bot),
@@ -113,7 +115,7 @@ function desdeAgente(agente: Fila, espacio: Fila): Observacion {
   }
 }
 
-function desdeDispatch(worker: Fila): Observacion {
+function desdeDispatch(worker: Fila, base: string): Observacion {
   const proyeccion = objeto(worker.projection)
   const recurso = objeto(worker.resource)
   const proveedor = objeto(proyeccion.provider)
@@ -133,7 +135,7 @@ function desdeDispatch(worker: Fila): Observacion {
   return {
     ids: claves(worker.agentTerminalHandle, recurso.terminalHandle, sesion(proveedor.sessionId),
       worker.paneKey, id && `dispatch:${id}`, id),
-    maquina: servidorId(servidor) ?? texto(host.id, worker.hostId) ?? LOCAL,
+    maquina: enMaquina(servidorId(servidor) ?? texto(host.id, worker.hostId), base),
     workspace: texto(espacio.id, recurso.worktreeId),
     padre: texto(padre.dispatchId, padre.id, padre.address, worker.coordinatedFrom,
       texto(padre.taskId) && `task:${padre.taskId}`),
@@ -149,14 +151,14 @@ function desdeDispatch(worker: Fila): Observacion {
   }
 }
 
-function desdeTrabajo(trabajo: Fila, bot: string, maquina: string): Observacion {
+function desdeTrabajo(trabajo: Fila, bot: string, maquina: string, base: string): Observacion {
   const agente = objeto(trabajo.agent)
   const status = trabajo.idle === true ? 'idle' : texto(trabajo.state, trabajo.status, agente.state)
   const desde = fecha(trabajo.startedAt, trabajo.createdAt, agente.stateStartedAt)
   return {
     ids: claves(trabajo.terminalHandle, trabajo.agentTerminalHandle, sesion(trabajo.orcaSessionId),
       trabajo.dispatchId, trabajo.workerId, trabajo.id),
-    maquina: texto(trabajo.hostId) ?? maquina,
+    maquina: texto(trabajo.hostId) ? enMaquina(texto(trabajo.hostId), base) : maquina,
     workspace: texto(trabajo.worktreeId, trabajo.workspaceId),
     bot,
     nombre: linea(trabajo.title, trabajo.name),
@@ -169,15 +171,43 @@ function desdeTrabajo(trabajo: Fila, bot: string, maquina: string): Observacion 
   }
 }
 
-export function normalizar(captura: Captura, ahora: number): Grafo {
+export function normalizar(captura: Captura, ahora: number, guardado: Modelos = {}): Grafo {
+  const modelos = depurarModelos(guardado, ahora)
+  const grafo = normalizarHost(captura, ahora, modelos, LOCAL, textos.local)
+  const nodos = new Map(grafo.nodos.map((nodo) => [nodo.id, nodo]))
+  if (captura.entornos?.fallo) grafo.fallos.push(captura.entornos.fallo)
+  for (const { id, nombre } of entornosGuardados(captura.entornos)) {
+    const remoto = normalizarHost({
+      ...captura.remotasVivas?.[id],
+      ...captura.remotasOtras?.[id],
+    }, ahora, modelos, maquinaRemota(id), nombre)
+    for (const nodo of remoto.nodos) nodos.set(nodo.id, nodo)
+    grafo.aristas.push(...remoto.aristas)
+    grafo.fallos.push(...remoto.fallos)
+  }
+  grafo.nodos = [...nodos.values()]
+  const agrupaciones = new Set<string>()
+  grafo.aristas = grafo.aristas.filter(({ tipo, origen, destino }) => {
+    if (tipo !== 'agrupa') return true
+    const llave = clave(origen, destino)
+    if (agrupaciones.has(llave)) return false
+    agrupaciones.add(llave)
+    return true
+  })
+  return grafo
+}
+
+function normalizarHost(captura: CapturaHost, ahora: number, modelos: Modelos, base: string, nombreBase: string): Grafo {
   const nodos = new Map<string, Nodo>()
   const aristas = new Map<string, Arista>()
   const bots = new Map<string, string>()
   const participantes = new Map<string, string>()
-  const nombresMaquina = new Map<string, string>([[LOCAL, textos.local]])
+  const nombresMaquina = new Map<string, string>([[base, nombreBase]])
   const maquinasPorNombre = new Map<string, string>()
   const maquinasObservadas = new Set<string>()
-  const clave = (maquina: string, id: string) => JSON.stringify([maquina, id])
+  const porPanel = captura.terminales && inventarioTerminales({ base, fuente: captura.terminales }).porPanel
+  const idNodo = (tipo: string, maquina: string, id: string) =>
+    `${tipo}:${maquina === LOCAL ? id : clave(maquina, id)}`
 
   function conectar(arista: Arista, id?: string) {
     if (arista.origen === arista.destino || !nodos.has(arista.origen) || !nodos.has(arista.destino)) return
@@ -186,29 +216,22 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
 
   for (const espacio of captura.worktrees?.filas ?? []) {
     const nombre = texto(objeto(espacio.environment).name, objeto(espacio.address).environment)
-    const host = espacioId(espacio)
+    const host = espacioId(espacio, base)
     maquinasObservadas.add(host)
-    if (nombre && host !== LOCAL && nombre !== LOCAL) {
+    if (nombre && host !== base && nombre !== LOCAL) {
       nombresMaquina.set(host, nombre)
       maquinasPorNombre.set(nombre, host)
     }
   }
   const dispatches = (captura.workers?.filas ?? []).map((worker) => {
-    const visto = desdeDispatch(worker)
+    const visto = desdeDispatch(worker, base)
     const nombre = texto(objeto(worker.server).name)
-    if (nombre && visto.maquina !== LOCAL) {
+    if (nombre && visto.maquina !== base) {
       nombresMaquina.set(visto.maquina, nombre)
       maquinasPorNombre.set(nombre, visto.maquina)
     }
     return visto
   })
-  const maquinaDispatch = new Map<string, string>()
-  for (const visto of dispatches) {
-    for (const id of visto.ids) {
-      if (id.startsWith('dispatch:')) maquinaDispatch.set(id, visto.maquina)
-    }
-  }
-
   const pendientes = (captura.pendientes?.filas ?? []).flatMap((item) => {
     const id = texto(item.uid) ?? (typeof item.number === 'number' ? String(item.number) : null)
     const tarea = linea(item.title, item.question)
@@ -218,7 +241,7 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
   const cola = pendientes.length
     ? textos.cola(pendientes.length)
     : captura.pendientes && !captura.pendientes.fallo ? textos.sinPendientes : textos.colaDesconocida
-  nodos.set(TU, {
+  if (base === LOCAL) nodos.set(TU, {
     id: TU, tipo: 'tu', nombre: textos.tu,
     estado: cola, tarea: pendientes[0]?.tarea ?? null, desde: pendientes[0]?.desde ?? null,
     maquina: LOCAL, pendientes,
@@ -230,28 +253,30 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
     if (!original || !nombre) continue
     const agente = texto(bot.agent)
     const modelo = texto(bot.model)
-    const id = `bot:${original}`
     const servidor = objeto(bot.server)
     const nombreServidor = texto(servidor.name)
-    const maquina = texto(bot.hostId) ?? (nombreServidor && maquinasPorNombre.get(nombreServidor)) ??
-      servidorId(servidor) ?? LOCAL
-    if (nombreServidor) nombresMaquina.set(maquina, nombreServidor)
+    const host = texto(bot.hostId) ?? (nombreServidor && maquinasPorNombre.get(nombreServidor)) ?? servidorId(servidor)
+    const maquina = enMaquina(host, base)
+    const id = idNodo('bot', maquina, original)
+    if (nombreServidor && maquina !== base) nombresMaquina.set(maquina, nombreServidor)
     if (!nodos.has(id)) nodos.set(id, {
       id, tipo: 'bot', nombre, maquina, estado: bot.paused ? textos.pausado : textos.disponible,
       tarea: linea(bot.specialty), desde: fecha(bot.updatedAt, bot.createdAt),
       ...(agente && { agente }), ...(modelo && { modelo }),
+      ...(base !== LOCAL && maquina === base && nombre === textos.bob && { pendientes }),
     })
     for (const alias of [original, nombre]) {
       bots.set(clave(maquina, alias), id)
-      if (alias === original || maquina === LOCAL) bots.set(alias, id)
       participantes.set(clave(maquina, `bot:${alias}`), id)
     }
   }
 
-  const bob = bots.get(textos.bob)
+  const bob = bots.get(clave(base, textos.bob))
   if (bob) {
     conectar({ tipo: 'agrupa', origen: TU, destino: bob })
-    for (const id of new Set(bots.values())) conectar({ tipo: 'agrupa', origen: bob, destino: id })
+    for (const id of new Set(bots.values())) {
+      if (nodos.get(id)?.maquina === base) conectar({ tipo: 'agrupa', origen: bob, destino: id })
+    }
   }
 
   const propietarios = new Map<string, string>()
@@ -259,27 +284,27 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
   for (const [bot, fuente] of Object.entries(captura.trabajos ?? {})) {
     for (const fila of fuente.filas) {
       const id = texto(fila.id)
-      if (id) propietarios.set(id, bot)
+      if (id) propietarios.set(clave(enMaquina(texto(fila.hostId), base), id), bot)
     }
     for (const fila of fuente.items ?? []) {
-      const despacho = texto(fila.dispatchId)
       const servidor = texto(fila.server)
-      const maquina = (despacho && maquinaDispatch.get(`dispatch:${despacho}`)) ??
-        (servidor && maquinasPorNombre.get(servidor)) ?? nodos.get(bots.get(bot) ?? '')?.maquina ?? LOCAL
-      trabajos.push(desdeTrabajo(fila, bot, maquina))
+      const maquina = (servidor && maquinasPorNombre.get(servidor)) || base
+      trabajos.push(desdeTrabajo(fila, bot, maquina, base))
     }
   }
 
   const observaciones: Observacion[] = []
   for (const espacio of captura.worktrees?.filas ?? []) {
     const agentes = filas(espacio.agents)
-    const host = espacioId(espacio)
+    const host = espacioId(espacio, base)
     const id = texto(espacio.worktreeId)
-    const propietario = (id && propietarios.get(id)) || texto(espacio.bot)
-    const bot = propietario ? (bots.get(clave(host, propietario)) ?? bots.get(propietario)) : undefined
+    const propietario = (id && propietarios.get(clave(host, id))) || texto(espacio.bot)
+    const bot = propietario ? bots.get(clave(host, propietario)) : undefined
 
     for (const agente of agentes) {
-      const visto = desdeAgente(agente, espacio)
+      const visto = desdeAgente(agente, espacio, host)
+      const panel = texto(agente.paneKey)
+      if (panel) visto.ids.push(...(porPanel?.get(clave(host, panel)) ?? []))
       visto.bot = propietario
       if (espacio.botHome === true && bot && !agente.parentPaneKey) {
         for (const alias of visto.ids) {
@@ -354,8 +379,16 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
     if (cerrado && (fin == null || ahora - fin >= DIA_MS)) continue
 
     const id = `worker:${canonico}`
-    const agente = texto(...grupo.map((visto) => visto.agente))
-    const modelo = texto(...grupo.map((visto) => visto.modelo))
+    let registrado: RegistroModelo | undefined
+    for (const visto of grupo) {
+      for (const alias of visto.ids) {
+        const registro = modelos[clave(visto.maquina, alias)]
+        if (registro && (!registrado || registro.desde > registrado.desde) &&
+            (!cerrado || fin === null || registro.desde <= fin)) registrado = registro
+      }
+    }
+    const agente = registrado?.agente ?? texto(...grupo.map((visto) => visto.agente))
+    const modelo = registrado?.modelo ?? texto(...grupo.map((visto) => visto.modelo))
     nodos.set(id, {
       id, tipo: 'worker', nombre: actual.nombre ?? agente ?? textos.worker,
       estado: estado(actual.estado), maquina: actual.maquina, desde: actual.desde,
@@ -372,7 +405,6 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
       }
       for (const alias of visto.ids) {
         participantes.set(clave(visto.maquina, alias), id)
-        if (visto.maquina === LOCAL) participantes.set(alias, id)
       }
       if (visto.workspace) {
         const llave = clave(visto.maquina, visto.workspace)
@@ -390,8 +422,8 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
         participantes.get(clave(visto.maquina, visto.padre)) ??
         porTarea.get(clave(visto.maquina, visto.padre)) ??
         (posibles?.size === 1 ? posibles.values().next().value : undefined)
-      )) || (visto.bot && (bots.get(clave(visto.maquina, visto.bot)) ?? bots.get(visto.bot))) ||
-        (visto.workspace && bots.get(propietarios.get(visto.workspace) ?? ''))
+      )) || (visto.bot && (bots.get(clave(visto.maquina, visto.bot)) ?? bots.get(clave(base, visto.bot)))) ||
+        (visto.workspace && bots.get(clave(base, propietarios.get(clave(visto.maquina, visto.workspace)) ?? '')))
       if (origen && origen !== id) {
         conectar({ tipo: 'lanzamiento', origen, destino: id })
         break
@@ -402,7 +434,8 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
   for (const auto of captura.automatizaciones?.filas ?? []) {
     const claveAuto = texto(auto.id)
     if (!claveAuto) continue
-    const id = `automatizacion:${claveAuto}`
+    const maquina = enMaquina(texto(auto.executionTargetId), base)
+    const id = idNodo('automatizacion', maquina, claveAuto)
     const agente = texto(auto.agentId)
     const bot = objeto(auto.bot)
     const lanzamiento = objeto(objeto(bot.agentSetup).launch)
@@ -410,20 +443,18 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
     nodos.set(id, {
       id, tipo: 'automatizacion', nombre: linea(auto.name) ?? claveAuto,
       estado: auto.enabled ? textos.activa : textos.desactivada,
-      maquina: texto(auto.executionTargetId) ?? LOCAL,
+      maquina,
       tarea: linea(auto.prompt, auto.name), desde: fecha(auto.lastRunAt, auto.createdAt),
       ...(agente && { agente }), ...(modelo && { modelo }),
     })
-    const origen = bots.get(texto(bot.botId) ?? '')
+    const origen = bots.get(clave(base, texto(bot.botId) ?? ''))
     if (origen) conectar({ tipo: 'agrupa', origen, destino: id })
   }
 
   for (const mensaje of captura.mensajes?.filas ?? []) {
-    const host = texto(mensaje.hostId) ?? LOCAL
-    const origen = participantes.get(texto(mensaje.from_handle) ?? '') ??
-      participantes.get(clave(host, texto(mensaje.from_handle) ?? ''))
-    const destino = participantes.get(texto(mensaje.to_handle) ?? '') ??
-      participantes.get(clave(host, texto(mensaje.to_handle) ?? ''))
+    const host = enMaquina(texto(mensaje.hostId), base)
+    const origen = participantes.get(clave(host, texto(mensaje.from_handle) ?? ''))
+    const destino = participantes.get(clave(host, texto(mensaje.to_handle) ?? ''))
     const hora = fecha(mensaje.created_at)
     if (!origen || !destino || hora === null) continue
     const asunto = linea(mensaje.subject)
@@ -433,24 +464,30 @@ export function normalizar(captura: Captura, ahora: number): Grafo {
     }
   }
 
-  for (const nodo of [...nodos.values()]) {
-    const id = `maquina:${nodo.maquina}`
-    if (!nodos.has(id)) nodos.set(id, {
-      id, tipo: 'maquina', nombre: nombresMaquina.get(nodo.maquina) ?? nodo.maquina,
-      estado: maquinasObservadas.has(nodo.maquina) ? textos.disponible : textos.desconocido,
-      maquina: nodo.maquina, tarea: null, desde: null,
-    })
-    conectar({ tipo: 'agrupa', origen: id, destino: nodo.id })
-  }
-
   const fuentes = [
     captura.bots, ...Object.values(captura.trabajos ?? {}), captura.pendientes, captura.worktrees,
-    captura.workers, captura.mensajes, captura.automatizaciones,
-  ]
+    captura.workers, captura.terminales, captura.mensajes, captura.automatizaciones,
+  ].filter((fuente) => fuente !== undefined)
+  const fallos = fuentes.flatMap((fuente) => fuente.fallo ?? [])
+  const miembros = [...nodos.values()]
+  const maquinas = new Set([base, ...maquinasObservadas, ...miembros.map((nodo) => nodo.maquina)])
+  for (const maquina of maquinas) {
+    const id = `maquina:${maquina}`
+    const disponible = maquinasObservadas.has(maquina) ||
+      (maquina === base && fuentes.some((fuente) => !fuente.fallo || fuente.fallo.codigo === 'parcial'))
+    nodos.set(id, {
+      id, tipo: 'maquina', nombre: nombresMaquina.get(maquina) ?? maquina,
+      estado: disponible ? textos.disponible :
+        maquina === base && fallos.length ? textos.noDisponible : textos.desconocido,
+      maquina, tarea: null, desde: null,
+    })
+  }
+  for (const nodo of miembros) conectar({ tipo: 'agrupa', origen: `maquina:${nodo.maquina}`, destino: nodo.id })
+
   return {
     nodos: [...nodos.values()],
     aristas: [...aristas.values()],
     generado: ahora,
-    fallos: fuentes.flatMap((fuente) => fuente?.fallo ?? []),
+    fallos,
   }
 }

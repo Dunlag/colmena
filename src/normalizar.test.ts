@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'orca/testing'
 import { normalizar } from './normalizar'
-import type { Captura, Fila } from './datos'
+import { clave, LOCAL, type Captura, type Fila } from './datos'
 import { textos } from './textos'
 
 const AHORA = 1795608000000
@@ -74,7 +74,7 @@ test('Conserva el tipo de agente cuando Orca no informa el modelo', () => {
 
 test('Una fuente fallida queda anotada sin ocultar otras fuentes', () => {
   const datos = captura()
-  const fallo = { fuente: 'automations list', codigo: 'timeout', mensaje: textos.tiempoAgotado }
+  const fallo = { maquina: LOCAL, fuente: 'automations list', codigo: 'timeout', mensaje: textos.tiempoAgotado }
   datos.automatizaciones = { filas: [], fallo }
   const grafo = normalizar(datos, AHORA)
   assert.deepEqual(grafo.fallos, [fallo])
@@ -93,4 +93,19 @@ test('Dos máquinas pueden devolver el mismo handle sin fusionar sus workers', (
   const grafo = normalizar(datos, AHORA)
   assert.equal(grafo.nodos.filter((nodo) => nodo.tipo === 'worker' && !nodo.atenuado).length, 2)
   assert.ok(grafo.nodos.some((nodo) => nodo.id === 'maquina:remota'))
+})
+
+test('Aplica el modelo guardado a un worker encontrado por el panel de su terminal', () => {
+  const datos = captura()
+  datos.workers = undefined
+  datos.terminales = { filas: [{ handle: 'term_a', tabId: 'tab-a', leafId: 'panel-a', executionHostId: LOCAL }] }
+  const registro = { agente: 'codex', modelo: 'gpt-ejemplo', maquina: LOCAL, desde: AHORA - 5000 }
+  const llave = clave(LOCAL, 'term_a')
+  const remoto = { ...registro, maquina: 'runtime:deck', modelo: 'otro-modelo' }
+  const modelos = { [llave]: registro, [clave(remoto.maquina, 'term_a')]: remoto }
+  const worker = normalizar(datos, AHORA, modelos).nodos.find((nodo) => nodo.tipo === 'worker')
+  assert.equal(worker?.modelo, 'gpt-ejemplo')
+  const caducado = normalizar(datos, registro.desde + DIA_MS, modelos).nodos.find((nodo) => nodo.tipo === 'worker')
+  assert.equal(caducado?.agente, 'codex')
+  assert.equal(caducado?.modelo, undefined)
 })
