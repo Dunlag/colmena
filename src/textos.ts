@@ -1,3 +1,16 @@
+// Asuntos de sistema de Orca: solo se traducen al mostrarlos; los datos no cambian.
+const asuntosSistema: Record<string, string> = {
+  'Worker stopped without reporting': 'El worker paró sin informar',
+  'Worker is waiting for permission': 'El worker espera un permiso',
+  'Worker approval answered': 'Permiso del worker respondido',
+  'Question': 'Pregunta',
+  'Re: Question': 'Re: Pregunta',
+}
+
+export function traducirAsunto(asunto: string): string {
+  return Object.hasOwn(asuntosSistema, asunto) ? asuntosSistema[asunto] : asunto
+}
+
 export const textos = {
   colmena: 'Colmena',
   abrirColmena: 'Abrir colmena',

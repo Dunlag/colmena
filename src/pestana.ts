@@ -3,7 +3,7 @@ import { mensajes, tipoMensaje, ultimos30Segundos, VENTANA_FLUJO_MS, type Mensaj
 import { curva, disponer } from './layout'
 import type { Grafo, Nodo, Situacion } from './normalizar'
 import { LATIDO_VISTA_MS } from './protocol'
-import { textos } from './textos'
+import { textos, traducirAsunto } from './textos'
 
 const CANTIDAD_FLUJOS = 20
 const NIVELES = { ahorro: textos.ahorro, completo: textos.completo } as const
@@ -355,7 +355,7 @@ export function montarPestana(orca: OrcaFrameApi) {
       const tiempo = elemento('time', 'secundario', horario.format(hora))
       tiempo.dateTime = new Date(hora).toISOString()
       encabezado.append(elemento('span', 'tipo-flujo', textos.tiposMensaje[tipo]), tiempo)
-      item.append(encabezado, nombre, elemento('span', 'asunto', asunto ?? textos.sinAsunto))
+      item.append(encabezado, nombre, elemento('span', 'asunto', traducirAsunto(asunto ?? textos.sinAsunto)))
       lista.append(item)
     }
     listaFlujos.replaceChildren(lista)

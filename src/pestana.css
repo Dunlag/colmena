@@ -196,13 +196,6 @@ select {
 :is(.nodo, select):focus-visible { outline: 2px solid var(--foco); outline-offset: 2px; z-index: 1; }
 .datos-nodo { display: grid; align-content: start; min-width: 0; line-height: 1.25; }
 .nombre { font-weight: 680; }
-.nodo .nombre {
-  display: -webkit-box;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
 .tarea { grid-column: 1 / -1; font-size: 11px; color: var(--secundario); }
 .nodo .secundario, .estado, .chip-maquina { font-size: 10px; }
 .truncado { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
