@@ -29,6 +29,8 @@ export type Nodo = {
   destino?: Destino
   atenuado?: true
   pendientes?: Pendiente[]
+  /** Solo en automatizaciones activas: próxima ejecución (`nextRunAt`). */
+  proxima?: number
   /** Solo en tipo 'grupo' (lo crea layout): cuántos workers terminados esconde. */
   miembros?: number
 }
@@ -53,6 +55,8 @@ export type Grafo = {
   aristas: Arista[]
   generado: number
   fallos: FalloFuente[]
+  /** Hora de cierre de los items de Bob cerrados (done/canceled) que se han leído. */
+  cierres: number[]
   /** Recuento con los terminados plegados: tarjetas dibujadas (sin máquinas) y líneas del árbol que se dibujan. */
   recuento: { nodos: number; conexiones: number }
 }
@@ -251,6 +255,7 @@ export function normalizar(captura: Captura, ahora: number, guardado: Modelos = 
     for (const nodo of remoto.nodos) nodos.set(nodo.id, nodo)
     grafo.aristas.push(...remoto.aristas)
     grafo.fallos.push(...remoto.fallos)
+    grafo.cierres.push(...remoto.cierres)
   }
   const bots = new Map<string, string>()
   const aliases = new Map<string, string>()
@@ -567,12 +572,13 @@ function normalizarHost(
     const bot = objeto(auto.bot)
     const lanzamiento = objeto(objeto(bot.agentSetup).launch)
     const modelo = texto(auto.model, objeto(auto.agentSetup).model, lanzamiento.model)
+    const proxima = auto.enabled ? fecha(auto.nextRunAt) : null
     nodos.set(id, {
       id, tipo: 'automatizacion', nombre: linea(auto.name) ?? claveAuto,
       estado: auto.enabled ? textos.activa : textos.desactivada,
       maquina,
       tarea: linea(auto.prompt, auto.name), desde: fecha(auto.lastRunAt, auto.createdAt),
-      ...(agente && { agente }), ...(modelo && { modelo }),
+      ...(agente && { agente }), ...(modelo && { modelo }), ...(proxima && { proxima }),
     })
     const origen = bots.get(clave(base, texto(bot.botId) ?? ''))
     if (origen) conectar({ tipo: 'agrupa', origen, destino: id })
@@ -600,7 +606,7 @@ function normalizarHost(
   }
 
   const fuentes = [
-    captura.bots, captura.iniciosBots, ...Object.values(captura.trabajos ?? {}), captura.pendientes, captura.worktrees,
+    captura.bots, captura.iniciosBots, ...Object.values(captura.trabajos ?? {}), captura.pendientes, captura.cerrados, captura.worktrees,
     captura.workers, captura.terminales, captura.mensajes, captura.automatizaciones,
   ].filter((fuente) => fuente !== undefined)
   const fallos = fuentes.flatMap((fuente) => fuente.fallo ?? [])
@@ -624,5 +630,6 @@ function normalizarHost(
     aristas: [...aristas.values()],
     generado: ahora,
     fallos,
+    cierres: (captura.cerrados?.filas ?? []).flatMap((item) => fecha(item.closedAt) ?? []),
   }
 }

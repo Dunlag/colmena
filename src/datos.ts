@@ -18,6 +18,8 @@ export type CapturaHost = {
   bots?: Fuente
   trabajos?: Record<string, Fuente>
   pendientes?: Fuente
+  /** Items de Bob cerrados (done/canceled), para el resumen del día. */
+  cerrados?: Fuente
   worktrees?: Fuente
   iniciosBots?: Fuente
   workers?: Fuente

@@ -157,9 +157,8 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
   suscripciones.push(
     orca.commands.register('colmena.abrir', async () => (await abrirColmena(orca.host)).error),
     orca.panels.handle('colmena.abrir', () => abrirColmena(orca.host)),
-    orca.panels.handle('nodo.abrir', ({ id }, { panel, signal }) => panel.surface === 'editor'
-      ? abrirNodo(orca.host, signal, grafo.nodos.find((nodo) => nodo.id === id))
-      : { error: textos.sinDestino }),
+    orca.panels.handle('nodo.abrir', ({ id }, { signal }) =>
+      abrirNodo(orca.host, signal, grafo.nodos.find((nodo) => nodo.id === id))),
   )
   suscripciones.push(orca.hooks.on(hookModelo, ({ terminalId, agent, command }) => {
     if (vida.signal.aborted || !terminalId) return

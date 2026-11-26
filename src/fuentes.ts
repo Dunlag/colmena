@@ -78,7 +78,7 @@ export async function vivas(host: Host, signal: AbortSignal): Promise<Captura> {
   }) } }
 }
 
-type Lenta = { en: number; bots: Fuente; trabajos: Record<string, Fuente>; automatizaciones: Fuente }
+type Lenta = { en: number; bots: Fuente; trabajos: Record<string, Fuente>; automatizaciones: Fuente; cerrados: Fuente }
 
 export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar, ahora: () => number = Date.now) {
   let signal = vida
@@ -224,7 +224,11 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar, ahora: (
       }
     }
     const automatizaciones = await consultar(['automations', 'list'], 'automations', servidor)
-    const lenta = { en: ahora(), bots, trabajos, automatizaciones }
+    // shortcut: una página (50, lo más reciente primero) basta para contar los cerrados de hoy; con más de 50 al día, paginar.
+    const cerrados = await consultar(
+      ['bot', 'item', 'list', '--bot', textos.bob, '--status', 'done,canceled'], 'items', servidor,
+    )
+    const lenta = { en: ahora(), bots, trabajos, automatizaciones, cerrados }
     // Si falla la lista de bots o de automatizaciones no se cachea: la siguiente ronda reintenta.
     if (signal.aborted || bots.fallo || automatizaciones.fallo) lentas.delete(id)
     else lentas.set(id, lenta)
@@ -232,7 +236,7 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar, ahora: (
   }
 
   async function otrasHost(servidor?: Entorno): Promise<CapturaHost> {
-    const { bots, trabajos, automatizaciones } = await lentaHost(servidor)
+    const { bots, trabajos, automatizaciones, cerrados } = await lentaHost(servidor)
     // Sin bots no hay inicios que buscar; sin consultar tampoco cuenta como fuente disponible.
     const agentes = bots.filas.length ? await consultar(['agent', 'list'], 'agents', servidor) : undefined
     const nombres = new Set(bots.filas.map(({ name }) => name))
@@ -267,7 +271,7 @@ export function lector(vida: AbortSignal, comando: Ejecutar = ejecutar, ahora: (
         }
       }
     }
-    return { bots, trabajos, iniciosBots, pendientes, mensajes, automatizaciones, workers }
+    return { bots, trabajos, iniciosBots, pendientes, cerrados, mensajes, automatizaciones, workers }
   }
 
   async function porServidor(consultarHost: (servidor: Entorno) => Promise<CapturaHost>) {

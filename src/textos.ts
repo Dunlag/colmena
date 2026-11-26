@@ -96,5 +96,25 @@ export const textos = {
   parcial: 'Orca devolvió un resultado parcial.',
   recuento: (nodos: number, aristas: number) =>
     `${nodos} ${nodos === 1 ? 'nodo' : 'nodos'} · ${aristas} ${aristas === 1 ? 'conexión' : 'conexiones'}`,
+  abrirPestana: 'Abrir la pestaña completa',
+  resumenDia: (terminados: number, mensajes: number, cerrados: number) =>
+    `Hoy: ${terminados} ${terminados === 1 ? 'worker terminado' : 'workers terminados'} · ` +
+    `${mensajes} ${mensajes === 1 ? 'mensaje' : 'mensajes'} · ${cerrados} ${cerrados === 1 ? 'item cerrado' : 'items cerrados'}`,
+  atascos: 'Atascos',
+  motivoAtasco: {
+    permiso: 'Espera un permiso',
+    parado: (minutos: number) => `Más de ${minutos} min sin cambiar de estado`,
+    fallado: 'Ha fallado',
+  },
+  tuCola: 'Tu cola',
+  workersActivos: 'Workers activos',
+  sinBot: 'Sin bot',
+  enReposo: 'en reposo',
+  proximasAutomatizaciones: 'Próximas automatizaciones',
+  sinAutomatizaciones: 'Ninguna programada.',
+  ahora: 'ahora',
+  enTiempo: (cantidad: number, unidad: 'min' | 'h' | 'd') => `en ${cantidad} ${unidad}`,
+  minutosAtasco: 'Avisar de atasco tras',
+  minutos: (cantidad: number) => `${cantidad} min`,
   errores: (cantidad: number) => cantidad === 1 ? '1 consulta con errores' : `${cantidad} consultas con errores`,
 } as const

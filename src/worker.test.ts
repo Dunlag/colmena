@@ -28,7 +28,7 @@ test('El lector ejecuta consultas en serie y continúa tras un fallo de Orca', a
   }, () => reloj)
   const datos = await fuente.otras()
   assert.deepEqual(llamadas, [
-    'bot list', 'bot work list --bot Bob', 'automations list', 'agent list',
+    'bot list', 'bot work list --bot Bob', 'automations list', 'bot item list --bot Bob --status done,canceled', 'agent list',
     'bot item list --bot Bob --status needs_you', 'orchestration inbox --limit 100 --full',
     'orchestration worker-list --full',
   ])
