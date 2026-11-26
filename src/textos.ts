@@ -67,7 +67,7 @@ export const textos = {
   idioma: 'es',
   etiquetaNodo: (nombre: string, estado: string) => `${nombre}, ${estado}`,
   recorrido: (origen: string, destino: string) => `${origen} → ${destino}`,
-  tu: 'TÚ',
+  tu: 'Tú',
   bob: 'Bob',
   local: 'Esta máquina',
   worker: 'Worker',
@@ -99,7 +99,7 @@ export const textos = {
   abrirPestana: 'Abrir la pestaña completa',
   resumenDia: (terminados: number, mensajes: number, cerrados: number) =>
     `Hoy: ${terminados} ${terminados === 1 ? 'worker terminado' : 'workers terminados'} · ` +
-    `${mensajes} ${mensajes === 1 ? 'mensaje' : 'mensajes'} · ${cerrados} ${cerrados === 1 ? 'item cerrado' : 'items cerrados'}`,
+    `${mensajes} ${mensajes === 1 ? 'mensaje' : 'mensajes'} · ${cerrados} ${cerrados === 1 ? 'ítem cerrado' : 'ítems cerrados'}`,
   atascos: 'Atascos',
   motivoAtasco: {
     permiso: 'Espera un permiso',
