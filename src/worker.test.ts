@@ -115,3 +115,58 @@ test('Sin vista visible no sondea la CLI: solo una consulta al abrir y ninguna m
     await detener?.()
   }
 })
+
+test('Solo el panel lateral: CLI cada 10 min y al abrir si tiene más de 5 min; con la pestaña, cada 2 min', async () => {
+  const { mock } = await import('node:test')
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 })
+  const manejadores = new Map<string, (entrada: unknown, contexto: unknown) => unknown>()
+  const nada = { dispose() {} }
+  const orca = {
+    panels: { handle: (nombre: string, f: never) => (manejadores.set(nombre, f), nada), post() {} },
+    events: { on: () => nada }, commands: { register: () => nada }, hooks: { on: () => nada },
+    storage: { get: async () => undefined, set: async () => {} }, log() {}, host: {},
+  }
+  let otras = 0
+  const detener = activar(orca as never, () => ({ otras: async () => { otras++; return {} } }) as never, async () => ({}))
+  const vacio = () => new Promise((resolve) => setImmediate(resolve))
+  const abiertas = new Set<string>()
+  const vista = async (id: string, surface: 'panel' | 'editor', visible: boolean) => {
+    if (visible) abiertas.add(id)
+    else abiertas.delete(id)
+    manejadores.get('vista.visible')!({ visible }, { panel: { id, surface, contributionId: 'colmena' } })
+    await vacio()
+  }
+  // Avanza con el latido de 10 s de cada vista abierta.
+  const avanzar = async (ms: number) => {
+    for (let hecho = 0; hecho < ms; hecho += 10_000) {
+      mock.timers.tick(10_000)
+      for (const id of abiertas) await vista(id, id === 'pestana' ? 'editor' : 'panel', true)
+      await vacio()
+    }
+  }
+  try {
+    await vista('lateral', 'panel', true)
+    assert.equal(otras, 1, 'al abrir el panel sin datos')
+    await avanzar(590_000)
+    assert.equal(otras, 1, 'nada de la ronda de 2 min con solo el panel')
+    await avanzar(10_000)
+    assert.equal(otras, 2, 'una ronda a los 10 min')
+    await vista('lateral', 'panel', false)
+    await avanzar(240_000)
+    await vista('lateral', 'panel', true)
+    assert.equal(otras, 2, 'al reabrir con datos de 4 min no consulta')
+    await vista('lateral', 'panel', false)
+    await avanzar(70_000)
+    await vista('lateral', 'panel', true)
+    assert.equal(otras, 3, 'al reabrir con datos de más de 5 min consulta')
+    await vista('pestana', 'editor', true)
+    await avanzar(120_000)
+    assert.equal(otras, 4, 'con la pestaña visible vuelve la ronda de 2 min')
+    await vista('pestana', 'editor', false)
+    await avanzar(300_000)
+    assert.equal(otras, 4)
+  } finally {
+    mock.timers.reset()
+    await detener()
+  }
+})

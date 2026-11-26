@@ -12,7 +12,10 @@ export const eventos = [
 ] as const
 
 const DEBOUNCE_MS = 750
-const OTRAS_MS = 120_000
+/** Ronda de CLI con la pestaña a la vista. */
+export const OTRAS_MS = 120_000
+/** Ronda de CLI con solo el panel lateral a la vista: lo vivo llega por la API y los eventos. */
+export const SOLO_PANEL_MS = 600_000
 const OBSOLETO_MS = 300_000
 export const hookModelo = 'agent.launch.before'
 
@@ -20,12 +23,13 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
   const vida = new AbortController()
   const fuentes = crearLector(vida.signal)
   const vistas = new Map<string, number>()
+  const editores = new Set<string>()
   const actividad: Record<string, Fila> = Object.create(null)
   let captura: Captura = { actividad }
   let modelos: Modelos = {}
   let almacenamiento = Promise.resolve()
   let grafo = normalizar(captura, Date.now())
-  let siguienteOtra = 0
+  let inicioOtra = -Infinity
   let temporizador: ReturnType<typeof setTimeout> | undefined
   let temporizadorVivas: ReturnType<typeof setTimeout> | undefined
   let consulta: AbortController | undefined
@@ -54,9 +58,23 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
 
   function visibles(ahora: number) {
     for (const [id, vence] of vistas) {
-      if (vence <= ahora) vistas.delete(id)
+      if (vence <= ahora) olvidar(id)
     }
     return vistas.size > 0
+  }
+
+  function olvidar(id: string) {
+    vistas.delete(id)
+    editores.delete(id)
+  }
+
+  function siguienteOtra() {
+    return inicioOtra + (editores.size ? OTRAS_MS : SOLO_PANEL_MS)
+  }
+
+  /** Al abrir una vista, ronda en el acto si la última tiene más de 5 min. */
+  function alAbrir() {
+    if (Date.now() - ultimaOtra > OBSOLETO_MS) inicioOtra = -Infinity
   }
 
   function programar() {
@@ -67,10 +85,10 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
       return
     }
     const vence = Math.min(...vistas.values())
-    if (!consulta && ahora >= siguienteOtra) {
+    if (!consulta && ahora >= siguienteOtra()) {
       void refrescar()
     } else {
-      const siguiente = consulta ? vence : Math.min(vence, siguienteOtra)
+      const siguiente = consulta ? vence : Math.min(vence, siguienteOtra())
       temporizador = setTimeout(programar, Math.max(0, siguiente - ahora))
     }
   }
@@ -78,7 +96,7 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
   async function refrescar() {
     const actual = new AbortController()
     consulta = actual
-    siguienteOtra = Date.now() + OTRAS_MS
+    inicioOtra = Date.now()
     programar()
     try {
       const parcial = await fuentes.otras(actual.signal)
@@ -90,7 +108,7 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
       if (!actual.signal.aborted) orca.log(textos.falloConsulta)
     } finally {
       // Una consulta cancelada no reemplaza el inventario anterior.
-      if (actual.signal.aborted) siguienteOtra = 0
+      if (actual.signal.aborted) inicioOtra = -Infinity
       consulta = undefined
       programar()
     }
@@ -125,7 +143,10 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
     if (vivasPendientes) adelantar()
     // Una vista que aún no avisa con vista.visible recibe los datos de la CLI al abrirse, y luego cada 5 min como mucho.
     if (Date.now() - ultimaOtra > OBSOLETO_MS && !consulta) {
-      vistas.set(`obtener:${panel.id}`, Date.now() + VIGENCIA_VISTA_MS)
+      const id = `obtener:${panel.id}`
+      vistas.set(id, Date.now() + VIGENCIA_VISTA_MS)
+      if (panel.surface === 'editor') editores.add(id)
+      alAbrir()
       programar()
     }
     return grafo
@@ -146,10 +167,13 @@ export function activar(orca: OrcaWorkerApi, crearLector = lector, leerVivas = v
   ]
   suscripciones.push(orca.panels.handle('vista.visible', ({ visible }, { panel }) => {
     if (visible === true) {
+      visibles(Date.now())
+      if (!vistas.has(panel.id)) alAbrir()
       vistas.set(panel.id, Date.now() + VIGENCIA_VISTA_MS)
+      if (panel.surface === 'editor') editores.add(panel.id)
       if (!captura.worktrees) adelantar()
     } else {
-      vistas.delete(panel.id)
+      olvidar(panel.id)
     }
     programar()
     return {}
