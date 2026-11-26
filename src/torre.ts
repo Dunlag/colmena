@@ -1,6 +1,5 @@
-import type { Tone } from 'orca'
-import { mensajes, tipoMensaje, type Mensaje } from './flujos'
-import type { Grafo, Nodo, TipoMensaje } from './normalizar'
+import { mensajes, type Mensaje } from './flujos'
+import type { Grafo, Nodo } from './normalizar'
 import { textos } from './textos'
 
 export const MINUTOS_ATASCO = 20
@@ -94,19 +93,4 @@ export function activosPorBot(grafo: Grafo): GrupoBot[] {
 
 export function ultimosFlujos(grafo: Grafo, limite = 5): Mensaje[] {
   return mensajes(grafo.aristas).slice(0, limite)
-}
-
-// Los mismos colores que la pestaña, en los cinco tonos que dibuja un panel de componentes.
-export const tonoMensaje: Record<TipoMensaje, Tone> = {
-  encargo: 'accent', pregunta: 'warning', estado: 'neutral', resultado: 'success',
-}
-
-export function tonoFlujo(mensaje: Mensaje): Tone {
-  return tonoMensaje[tipoMensaje(mensaje)]
-}
-
-export function tonoNodo(nodo: Nodo): Tone {
-  if (nodo.estado === textos.fallido) return 'danger'
-  if (nodo.estado === textos.bloqueado) return 'warning'
-  return nodo.situacion === 'trabajando' ? 'success' : nodo.situacion === 'esperando' ? 'accent' : 'neutral'
 }

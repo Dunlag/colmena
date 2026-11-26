@@ -1,13 +1,14 @@
 import {
   atom, Box, Heading, IconButton, List, ListItem, plugin, read, RelativeTime, Row, Select, set, Stack, Text,
-  type PanelContext, type Tone,
+  type OrcaNode, type PanelContext, type Tone,
 } from 'orca'
+import { estados, tipos, tonoFlujo, tonoNodo } from './estilo'
+import { tipoMensaje } from './flujos'
 import type { Grafo, Nodo } from './normalizar'
 import { LATIDO_VISTA_MS } from './protocol'
 import { traducirAsunto, textos } from './textos'
 import {
-  activosPorBot, atascos, cuentaAtras, destinoItem, MINUTOS_ATASCO, proximas, resumenDia, tonoFlujo, tonoNodo,
-  ultimosFlujos,
+  activosPorBot, atascos, cuentaAtras, destinoItem, MINUTOS_ATASCO, proximas, resumenDia, ultimosFlujos,
 } from './torre'
 
 const grafo = atom<Grafo | null>(null)
@@ -90,29 +91,31 @@ export function setup(ctx: PanelContext): void {
   })
 }
 
-function Punto({ tone }: { tone: Tone }) {
-  return <Text tone={tone} size="xs">●</Text>
-}
-
-function Fila({ tone, titulo, detalle, onPress }: {
-  tone: Tone; titulo: string; detalle?: unknown; onPress?: () => unknown
+/** Tarjeta pequeña como las de la pestaña: icono y borde del tipo, punto y palabra de estado. */
+function Fila({ tipo, borde, tone, estado, titulo, detalle, resaltado, disabled, onPress }: {
+  tipo?: Nodo['tipo']; borde?: Tone; tone?: Tone; estado?: string; titulo: string; detalle?: OrcaNode
+  resaltado?: boolean; disabled?: boolean; onPress?: () => unknown
 }) {
   const contenido = (
-    <Row gap="xs" align="start">
-      <Punto tone={tone} />
-      <Stack gap="none">
-        <Text size="sm" truncate>{titulo}</Text>
-        {detalle ? <Text size="xs" muted truncate>{detalle}</Text> : null}
-      </Stack>
-    </Row>
+    <Box padding="xs" paddingX="sm" radius="md" gap="none" grow
+      border={resaltado ? 'success' : borde ?? (tipo ? tipos[tipo].tono : true)}
+      background={resaltado ? 'success' : 'card'}>
+      <Text size="sm" weight="semibold" truncate>{titulo}</Text>
+      {detalle ? <Text size="xs" muted truncate>{detalle}</Text> : null}
+      {tone && <Text size="xs" tone={tone} truncate>{estado ? `● ${estado}` : '●'}</Text>}
+    </Box>
   )
-  return onPress ? <ListItem onPress={onPress}>{contenido}</ListItem> : <ListItem>{contenido}</ListItem>
+  const icono = tipo && tipos[tipo].iconoOrca
+  return onPress
+    ? <ListItem icon={icono} onPress={onPress}>{contenido}</ListItem>
+    : <ListItem icon={icono} disabled={disabled}>{contenido}</ListItem>
 }
 
-function Bloque({ titulo, children }: { titulo: string; children?: unknown }) {
+/** Cabecera de sección como .rotulo de la pestaña. */
+function Bloque({ titulo, children }: { titulo: string; children?: OrcaNode }) {
   return (
     <Stack gap="xs">
-      <Text size="xs" weight="semibold" muted>{titulo}</Text>
+      <Text size="xs" weight="semibold" muted>{titulo.toLocaleUpperCase(textos.idioma)}</Text>
       {children}
     </Stack>
   )
@@ -151,7 +154,8 @@ function Torre({ actual }: { actual: Grafo }) {
           <Bloque titulo={textos.atascos}>
             <List label={textos.atascos}>
               {alertas.map(({ nodo, motivo }) => (
-                <Fila key={nodo.id} tone={motivo === 'fallado' ? 'danger' : 'warning'} titulo={nodo.nombre}
+                <Fila key={nodo.id} tipo={nodo.tipo} borde={motivo === 'fallado' ? 'danger' : 'warning'}
+                  tone={motivo === 'fallado' ? 'danger' : 'warning'} estado={nodo.estado} titulo={nodo.nombre}
                   detalle={motivo === 'parado' ? textos.motivoAtasco.parado(minutos) : textos.motivoAtasco[motivo]}
                   onPress={() => abrirNodo(nodo.id)} />
               ))}
@@ -164,7 +168,7 @@ function Torre({ actual }: { actual: Grafo }) {
         {cola.length ? (
           <List label={textos.tuCola}>
             {cola.map((item) => (
-              <Fila key={item.id} tone="warning" titulo={item.tarea}
+              <Fila key={item.id} tipo="tu" tone="warning" estado={textos.pendiente} titulo={item.tarea}
                 detalle={item.desde ? fechaCorta(item.desde, ahora) : textos.sinFecha}
                 onPress={() => abrirNodo(bob)} />
             ))}
@@ -176,11 +180,12 @@ function Torre({ actual }: { actual: Grafo }) {
         <List label={textos.workersActivos}>
           {activosPorBot(actual).flatMap(({ bot, workers }) => [
             bot
-              ? <Fila key={bot.id} tone={workers.length ? 'success' : 'neutral'} titulo={bot.nombre}
-                  detalle={workers.length ? undefined : textos.enReposo} onPress={() => abrirNodo(bot.id)} />
-              : <Fila key="sin-bot" tone="neutral" titulo={textos.sinBot} />,
+              ? <Fila key={bot.id} tipo={bot.tipo} tone={workers.length ? 'success' : 'neutral'} titulo={bot.nombre}
+                  estado={workers.length ? estados.trabajando.etiqueta : textos.enReposo} onPress={() => abrirNodo(bot.id)} />
+              : <Fila key="sin-bot" tipo="bot" tone="neutral" titulo={textos.sinBot} />,
             ...workers.map((nodo) => (
-              <Fila key={nodo.id} tone={tonoNodo(nodo)} titulo={`↳ ${nodo.tarea ? traducirAsunto(nodo.tarea) : nodo.nombre}`}
+              <Fila key={nodo.id} tipo="worker" tone={tonoNodo(nodo)} estado={estados[nodo.situacion].etiqueta}
+                resaltado={nodo.situacion === 'trabajando' && tonoNodo(nodo) === 'success'} titulo={`↳ ${nodo.tarea ? traducirAsunto(nodo.tarea) : nodo.nombre}`}
                 detalle={detalleWorker(nodo)} onPress={() => abrirNodo(nodo.id)} />
             )),
           ])}
@@ -191,11 +196,8 @@ function Torre({ actual }: { actual: Grafo }) {
         {automatizaciones.length ? (
           <List label={textos.proximasAutomatizaciones}>
             {automatizaciones.map((nodo) => (
-              <ListItem key={nodo.id} disabled>
-                <Text size="sm" truncate>
-                  {`${nombreConHora(nodo.nombre, nodo.proxima)} · ${cuentaAtras(nodo.proxima, ahora)}`}
-                </Text>
-              </ListItem>
+              <Fila key={nodo.id} tipo="automatizacion" disabled
+                titulo={`${nombreConHora(nodo.nombre, nodo.proxima)} · ${cuentaAtras(nodo.proxima, ahora)}`} />
             ))}
           </List>
         ) : <Text size="xs" muted>{textos.sinAutomatizaciones}</Text>}
@@ -206,7 +208,8 @@ function Torre({ actual }: { actual: Grafo }) {
         {flujos.length ? (
           <List label={textos.flujos}>
             {flujos.map((mensaje, indice) => (
-              <Fila key={`${mensaje.hora}-${indice}`} tone={tonoFlujo(mensaje)}
+              <Fila key={`${mensaje.hora}-${indice}`} borde={tonoFlujo(mensaje)} tone={tonoFlujo(mensaje)}
+                estado={textos.tiposMensaje[tipoMensaje(mensaje)]}
                 titulo={traducirAsunto(mensaje.asunto ?? textos.sinAsunto)}
                 detalle={`${textos.recorrido(nombre(mensaje.origen), nombre(mensaje.destino))} · ${fechaCorta(mensaje.hora, ahora)}`} />
             ))}

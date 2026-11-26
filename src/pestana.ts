@@ -1,29 +1,14 @@
 import type { OrcaFrameApi } from 'orca/frame'
 import { mensajes, tipoMensaje, ultimos30Segundos, VENTANA_FLUJO_MS } from './flujos'
+import { estados, tipos, tono } from './estilo'
 import { curva, disponer } from './layout'
-import type { Grafo, Nodo, Situacion } from './normalizar'
+import type { Grafo, Nodo } from './normalizar'
 import { LATIDO_VISTA_MS } from './protocol'
 import { descripcionTarea, textos, traducirAsunto } from './textos'
 
 const CANTIDAD_FLUJOS = 20
 const NIVELES = { ahorro: textos.ahorro, completo: textos.completo } as const
 type Nivel = keyof typeof NIVELES
-
-const tipos = {
-  tu: { etiqueta: textos.usuario, icono: 'M9 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM4 15v-1a3 3 0 0 1 3-3h4a3 3 0 0 1 3 3v1' },
-  bob: { etiqueta: textos.coordinador, icono: 'M3 5l3 3 3-5 3 5 3-3-1.5 7h-9ZM5 15h8' },
-  bot: { etiqueta: textos.bot, icono: 'M9 3v3M6 11h.1m5.8 0h.1M4 6h10a1 1 0 0 1 1 1v7H3V7a1 1 0 0 1 1-1ZM1.5 10v2m15-2v2' },
-  worker: { etiqueta: textos.worker, icono: 'M3 4h12v10H3ZM6 7l2 2-2 2m4 0h2' },
-  automatizacion: { etiqueta: textos.automatizacion, icono: 'M15 9a6 6 0 1 0-6 6h2m-2-9v3l2 1m1 4 2-2 2 2' },
-  grupo: { etiqueta: textos.terminado, icono: 'M3 6h12M3 9h12M3 12h12' },
-  maquina: { etiqueta: textos.maquina, icono: 'M3 4h12v8H3Zm4 11h4m-2-3v3' },
-}
-
-const estados: Record<Situacion, { etiqueta: string; tono: string }> = {
-  trabajando: { etiqueta: textos.trabajando, tono: 'verde' },
-  esperando: { etiqueta: textos.esperando, tono: 'azul' },
-  terminado: { etiqueta: textos.terminado, tono: 'neutro' },
-}
 
 function elemento<K extends keyof HTMLElementTagNameMap>(
   tipo: K, clase = '', contenido = '',
@@ -49,13 +34,6 @@ function hace(hora: number, ahora: number): string {
   if (segundos < 3600) return relativo.format(-Math.floor(segundos / 60), 'minute')
   if (segundos < 86400) return relativo.format(-Math.floor(segundos / 3600), 'hour')
   return relativo.format(-Math.floor(segundos / 86400), 'day')
-}
-
-function tono(nodo: Nodo) {
-  if (nodo.tipo === 'tu' && nodo.pendientes?.length) return 'ambar'
-  if (nodo.estado === textos.fallido) return 'rojo'
-  if (nodo.estado === textos.bloqueado) return 'ambar'
-  return estados[nodo.situacion].tono
 }
 
 export function montarPestana(orca: OrcaFrameApi) {
