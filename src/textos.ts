@@ -67,7 +67,7 @@ export const textos = {
   idioma: 'es',
   etiquetaNodo: (nombre: string, estado: string) => `${nombre}, ${estado}`,
   recorrido: (origen: string, destino: string) => `${origen} → ${destino}`,
-  tu: 'Tú',
+  tu: 'TÚ',
   bob: 'Bob',
   local: 'Esta máquina',
   worker: 'Worker',
